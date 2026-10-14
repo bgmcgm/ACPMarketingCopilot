@@ -33,6 +33,21 @@ export class CosmosAuditRepository implements AuditRepository {
     await this.container.item(doc.id, doc.ownerId).replace(doc);
   }
 
+  async claim(doc: AuditDocument): Promise<AuditDocument | null> {
+    try {
+      const { resource } = await this.container
+        .item(doc.id, doc.ownerId)
+        .replace<AuditDocument>(doc, {
+          accessCondition: { type: "IfMatch", condition: doc._etag ?? "" },
+        });
+      return resource ?? null;
+    } catch (err) {
+      // 412: Dokument wurde zwischenzeitlich geändert → anderer Worker war schneller.
+      if ((err as { code?: number }).code === 412) return null;
+      throw err;
+    }
+  }
+
   async list(ownerId: string, limit: number, continuationToken?: string) {
     const iterator = this.container.items.query<AuditSummaryRow>(
       {

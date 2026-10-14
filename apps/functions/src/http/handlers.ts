@@ -39,12 +39,17 @@ export interface HandlerDeps {
   newCorrelationId?: () => string;
 }
 
+const MAX_BODY_BYTES = 10_000;
+
 type Handler = (req: ApiRequest, principal: Principal) => Promise<ApiResponse>;
 
 export class Handlers {
   constructor(private readonly d: HandlerDeps) {}
 
   createAudit = this.secured(async (req, p) => {
+    // Eingaben sind winzig (URL + Modulliste); große Bodies werden gar nicht erst gelesen.
+    const declared = Number(req.headers.get("content-length") ?? 0);
+    if (declared > MAX_BODY_BYTES) throw new ApiError(413, "PAYLOAD_TOO_LARGE", "Anfrage zu groß.");
     let body: unknown;
     try {
       body = await req.json();

@@ -233,7 +233,7 @@ describe("AuditPipeline – failures", () => {
     const original = repo.replace.bind(repo);
     let calls = 0;
     repo.replace = async (d) => {
-      if (++calls === 2) throw new Error("cosmos down");
+      if (++calls === 1) throw new Error("cosmos down");
       return original(d);
     };
     await expect(pipeline.process(msg)).rejects.toThrow("cosmos down");

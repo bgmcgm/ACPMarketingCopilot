@@ -13,6 +13,8 @@ export interface AuditDocument {
   id: string;
   ownerId: string;
   type: "audit";
+  /** Systemfeld von Cosmos (optimistische Sperre); nicht selbst setzen. */
+  _etag?: string;
   schemaVersion: 1;
   status: AuditStatus;
   createdAt: string;

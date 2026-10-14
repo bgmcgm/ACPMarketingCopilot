@@ -6,6 +6,12 @@ export interface AuditRepository {
   get(ownerId: string, id: string): Promise<AuditDocument | null>;
   /** Ersetzt das Dokument. Wirft, wenn es nicht (mehr) existiert. */
   replace(doc: AuditDocument): Promise<void>;
+  /**
+   * Ersetzt das Dokument nur, wenn es seit dem Lesen unverändert ist (optimistische Sperre über _etag).
+   * Verhindert, dass zwei Worker dieselbe Nachricht gleichzeitig verarbeiten.
+   * @returns das gespeicherte Dokument (mit neuem _etag) oder null bei Konflikt.
+   */
+  claim(doc: AuditDocument): Promise<AuditDocument | null>;
   list(
     ownerId: string,
     limit: number,

@@ -9,6 +9,7 @@ import type { AuditRepository } from "../persistence/ports.js";
 import { evaluateRuleset } from "../rules/engine.js";
 import type { Ruleset } from "../rules/types.js";
 import { computeScore, type ScoringConfig } from "../scoring/scoring.js";
+import { redactUrl } from "../lib/redact.js";
 import { toPageRecord } from "./pageRecord.js";
 
 export interface AuditPipelineDeps {
@@ -65,8 +66,15 @@ export class AuditPipeline {
       startedAt: doc.startedAt ?? this.now().toISOString(),
       attempts: doc.attempts + 1,
     };
-    await this.d.repo.replace(running);
-    log("Audit gestartet", { attempt: running.attempts, url: running.input.normalizedUrl });
+    const claimed = await this.d.repo.claim(running);
+    if (!claimed) {
+      log("Audit wird bereits von einem anderen Worker verarbeitet – Nachricht verworfen");
+      return;
+    }
+    log("Audit gestartet", {
+      attempt: running.attempts,
+      url: redactUrl(running.input.normalizedUrl),
+    });
 
     // Schritt 6: Website abrufen
     let fetched;
