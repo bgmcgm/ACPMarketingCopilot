@@ -8,5 +8,13 @@
     "types": ["node"]
   },
   "include": ["./**/*.ts"],
-  "references": [{ "path": "../packages/shared-types" }, { "path": "../apps/functions" }]
+  "references": [
+    {
+      "path": "../packages/shared-types"
+    },
+    {
+      "path": "../apps/functions"
+    }
+  ],
+  "exclude": ["web"]
 }

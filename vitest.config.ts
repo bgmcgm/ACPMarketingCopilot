@@ -9,5 +9,6 @@ export default defineConfig({
       "@mcopilot/shared-types": r("./packages/shared-types/src/index.ts"),
     },
   },
-  test: { include: ["tests/**/*.test.ts"] },
+  esbuild: { jsx: "automatic" },
+  test: { include: ["tests/**/*.test.{ts,tsx}"] },
 });
