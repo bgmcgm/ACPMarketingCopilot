@@ -4,12 +4,15 @@ import { StorageJobQueue } from "./persistence/storageJobQueue.js";
 import { defaultRuleset } from "./rules/index.js";
 import { AuditService } from "./services/auditService.js";
 import { Handlers, type Logger } from "./http/handlers.js";
+import { SafeFetcher } from "./fetcher/safeFetcher.js";
+import { AuditPipeline } from "./worker/auditPipeline.js";
 
 export const APP_VERSION = process.env["APP_VERSION"] ?? "0.1.0";
 
 export interface Container {
   config: AppConfig;
   handlers: Handlers;
+  pipeline: AuditPipeline;
 }
 
 let cached: Container | undefined;
@@ -33,8 +36,21 @@ export function getContainer(logger: Logger): Container {
     auditTtlSeconds: config.auditTtlSeconds,
     quotas: config.quotas,
   });
+  const fetcher = new SafeFetcher({
+    ...config.fetch,
+    maxLength: 2048,
+    userAgent: "MarketingCopilotAuditor/1.0 (+internal)",
+  });
+  const pipeline = new AuditPipeline({
+    repo,
+    fetcher,
+    ruleset: defaultRuleset,
+    scoring: config.scoring,
+    logger,
+  });
   cached = {
     config,
+    pipeline,
     handlers: new Handlers({
       service,
       repo,
