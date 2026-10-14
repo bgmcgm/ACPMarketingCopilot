@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AuditQueueMessage } from "@mcopilot/shared-types";
 import { DisabledAiProvider } from "../../apps/functions/src/ai/claudeProvider.js";
-import type { AiAssessmentInput, AiProvider } from "../../apps/functions/src/ai/provider.js";
+import type { AiProvider } from "../../apps/functions/src/ai/provider.js";
 import type { AuditDocument } from "../../apps/functions/src/domain/auditDocument.js";
 import type { FetchResult, PageFetcher } from "../../apps/functions/src/fetcher/safeFetcher.js";
 import type { Logger } from "../../apps/functions/src/http/handlers.js";
@@ -94,7 +94,7 @@ describe("concurrent processing of the same message", () => {
       },
     };
     const ai: AiProvider = {
-      assess: async (_i: AiAssessmentInput) => {
+      assess: async () => {
         aiCalls++;
         return {
           status: "skipped",

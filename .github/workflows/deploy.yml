@@ -119,6 +119,7 @@ jobs:
             echo "FUNC_APP=$(echo "$outputs" | jq -r .functionAppName.value)" >> "$GITHUB_ENV"
             echo "SWA_NAME=$(echo "$outputs" | jq -r .staticWebAppName.value)" >> "$GITHUB_ENV"
             echo "SWA_HOST=$(echo "$outputs" | jq -r .staticWebAppHostname.value)" >> "$GITHUB_ENV"
+            echo "FUNC_HOST=$(echo "$outputs" | jq -r .functionAppHostname.value)" >> "$GITHUB_ENV"
 
       # [ANNAHME] config-zip wird für Flex Consumption unterstützt; sonst Azure/functions-action verwenden.
       - name: Functions deployen
@@ -159,3 +160,7 @@ jobs:
             echo "Versuch $i: HTTP $code – warte 15 s"; sleep 15
           done
           echo "::error::Health-Check fehlgeschlagen"; exit 1
+
+      # Prüft die Sicherheitsannahmen (u. a.: Function App direkt nicht mit gefälschtem Principal erreichbar).
+      - name: Sicherheits-Smoke-Test
+        run: node scripts/smoke-test.mjs --swa "https://${SWA_HOST}" --func "https://${FUNC_HOST}"

@@ -143,6 +143,7 @@ module alerts 'modules/alerts.bicep' = if (deployAlerts) {
 output staticWebAppName string = staticWebApp.outputs.name
 output staticWebAppHostname string = staticWebApp.outputs.defaultHostname
 output functionAppName string = functionApp.outputs.name
+output functionAppHostname string = functionApp.outputs.defaultHostname
 output keyVaultName string = keyVault.outputs.name
 output cosmosAccountName string = cosmos.outputs.accountName
 output storageAccountName string = storage.outputs.name

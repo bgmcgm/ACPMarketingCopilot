@@ -64,6 +64,8 @@ Workflows: `.github/workflows/ci.yml` (Prüfung bei jedem Push/PR), `deploy-dev.
 
 ## 5. Verifikation nach dem Deploy
 
+Die Pipeline führt `scripts/smoke-test.mjs` automatisch aus (Health, Login-Pflicht, Security-Header und – kritisch – dass die Function App einen gefälschten `x-ms-client-principal` direkt nicht akzeptiert). Manuell: `node scripts/smoke-test.mjs --swa https://<swa> --func https://<func>`. Zusätzlich:
+
 1. `GET https://<swa>/api/health` → `{"status":"ok"}` (anonym).
 2. Anmelden, dann `GET /api/health?deep=true` → Cosmos und Queue `ok`.
 3. Test-Audit auf eine öffentliche URL; Verlauf und Report prüfen.

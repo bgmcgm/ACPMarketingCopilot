@@ -81,4 +81,5 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
 
 output name string = functionApp.name
 output id string = functionApp.id
+output defaultHostname string = functionApp.properties.defaultHostName
 output principalId string = functionApp.identity.principalId
