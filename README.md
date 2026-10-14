@@ -7,14 +7,14 @@ Architektur und Entscheidungen: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 
 ## Status
 
-| Inkrement | Inhalt | Stand |
-|---|---|---|
-| 0–1 | Monorepo, CI, `shared-types` | fertig |
-| 2 | HTML-Analyzer, Rules Engine (29 Regeln) | fertig |
-| 3 | Scoring (konfigurierbar) | fertig |
-| 4 | SSRF-sicherer URL-Validator + Fetcher | fertig |
-| 5 | Config, Persistenz, Auth, HTTP-API | in Arbeit |
-| 6–11 | Worker, Claude, Frontend, Bicep, Pipelines, Hardening | offen |
+| Inkrement | Inhalt                                                | Stand     |
+| --------- | ----------------------------------------------------- | --------- |
+| 0–1       | Monorepo, CI, `shared-types`                          | fertig    |
+| 2         | HTML-Analyzer, Rules Engine (29 Regeln)               | fertig    |
+| 3         | Scoring (konfigurierbar)                              | fertig    |
+| 4         | SSRF-sicherer URL-Validator + Fetcher                 | fertig    |
+| 5         | Config, Persistenz, Auth, HTTP-API                    | in Arbeit |
+| 6–11      | Worker, Claude, Frontend, Bicep, Pipelines, Hardening | offen     |
 
 ## Struktur
 
