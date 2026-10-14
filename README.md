@@ -18,7 +18,8 @@ Architektur und Entscheidungen: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 | 7         | KI-Bewertung (Claude, strukturierte JSON-Ausgabe)              | fertig (nur gegen Test-Doubles geprüft)        |
 | 8         | Frontend (React, Tailwind): Start, Report, Verlauf             | fertig (Browser-Prüfung nur mit gemockter API) |
 | 9         | Bicep (dev/prod), Runbook – lokal nur übersetzt, nicht deployt | fertig (ungetestet in Azure)                   |
-| 10–11     | Pipelines, Hardening                                           | offen                                          |
+| 10        | GitHub-Actions-Pipelines (OIDC, dev auto / prod mit Freigabe)  | fertig (nie gelaufen)                          |
+| 11        | Hardening, Integrationstests                                   | offen                                          |
 
 ## Struktur
 

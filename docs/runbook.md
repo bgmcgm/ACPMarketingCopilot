@@ -1,6 +1,6 @@
 # Runbook – Einrichtung DEV/PROD
 
-Stand: Inkrement 9. Die Pipelines (Inkrement 10) automatisieren die Schritte 4–6. Alles hier ist **ungetestet gegen eine echte Azure-Subscription** – das Bicep-Template wurde nur lokal übersetzt und typgeprüft (`bicep build`, `bicep lint`).
+Stand: Inkrement 9. Schritt 4 beschreibt die Pipelines (Inkrement 10). Alles hier ist **ungetestet gegen eine echte Azure-Subscription** – das Bicep-Template wurde nur lokal übersetzt und typgeprüft (`bicep build`, `bicep lint`).
 
 ## 0. Voraussetzungen
 
@@ -41,10 +41,26 @@ az keyvault secret set --vault-name <kv-name> --name anthropic-api-key --value '
 
 Danach in der `.bicepparam` `aiEnabled = true` und `aiModel = '<modell-id>'` setzen und neu deployen. Solange `aiEnabled = false`, erscheint im Report „KI-Bewertung deaktiviert“.
 
-## 4. Anwendung deployen (wird in Inkrement 10 automatisiert)
+## 4. Deployment per GitHub Actions
 
-- Function App (Flex Consumption): Build (`npm ci && npm run build -w @mcopilot/functions`), Paket per `az functionapp deployment source config-zip` oder Azure Functions Core Tools. Der Deployer braucht Schreibrechte auf den Container `app-package` (_Storage Blob Data Contributor_).
-- Static Web App: `swa deploy` mit Deployment-Token (`az staticwebapp secrets list`).
+Workflows: `.github/workflows/ci.yml` (Prüfung bei jedem Push/PR), `deploy-dev.yml` (automatisch bei Push auf `main`), `deploy-prod.yml` (nur Release-Tag `v*` oder manuell) – beide rufen `deploy.yml` auf: Tests → Build → Bicep what-if + deploy → Functions-Zip → Static Web App → Health-Smoke-Test.
+
+**Einmalige Einrichtung je Umgebung (manuell):**
+
+1. Entra: eigene App-Registrierung/Service Principal für das Deployment (nicht die App-Registrierung des Logins). Unter _Zertifikate & Geheimnisse → Federated credentials_ → _GitHub Actions deploying Azure resources_: Organisation/Repo `bgmcgm/ACPMarketingCopilot`, Entity type **Environment**, Name `dev` bzw. `prod`. So gibt es kein Passwort.
+2. Rollen für diesen Service Principal auf der Resource Group: **Contributor**, **Role Based Access Control Administrator** (das Template legt Rollenzuweisungen an) und **Storage Blob Data Contributor** (Paket-Upload der Function App).
+3. GitHub → Settings → Environments → `dev` und `prod` anlegen.
+   - Variables: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`
+   - Secret: `AAD_CLIENT_SECRET` (Client-Secret der Login-App-Registrierung aus Schritt 1)
+   - **prod: „Required reviewers“ aktivieren** und Deployment auf Tags/geschützte Branches beschränken.
+4. Branch Protection für `main` (CI muss grün sein).
+
+**Hinweise**
+
+- Der Tenant-Platzhalter in `staticwebapp.config.json` wird nur im Build-Ausgabeverzeichnis ersetzt (`scripts/prepare-swa-config.mjs`, validiert die GUID); das Repository enthält nie die echte Tenant-ID.
+- Das Functions-Paket baut `scripts/package-functions.mjs` (nur Produktionsabhängigkeiten, inkl. `shared-types`). Lokal: `npm run build && npm run package:functions`.
+- [ANNAHME] `az functionapp deployment source config-zip` funktioniert für Flex Consumption; sonst im Schritt „Functions deployen“ auf `Azure/functions-action` wechseln.
+- Aktionen sind auf Major-Versionen gepinnt; für höhere Lieferkettensicherheit später auf Commit-SHAs pinnen.
 
 ## 5. Verifikation nach dem Deploy
 

@@ -1,0 +1,161 @@
+# Wiederverwendbarer Deploy-Workflow (wird von deploy-dev.yml / deploy-prod.yml aufgerufen).
+#
+# Erwartet im GitHub Environment (Settings → Environments):
+#   vars:    AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID, AZURE_RESOURCE_GROUP
+#   secrets: AAD_CLIENT_SECRET (Client-Secret der Entra-App-Registrierung für das SWA-Login)
+# Anmeldung bei Azure per OIDC (Federated Credential) – keine Passwörter/Service-Principal-Secrets.
+name: Deploy
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: GitHub Environment (dev | prod)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npm run package:functions
+      - name: Functions-Paket zippen
+        run: cd .deploy/functions && zip -qr ../functions.zip .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: functions-package
+          path: .deploy/functions.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: apps/web/dist
+          if-no-files-found: error
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      id-token: write # OIDC-Login
+    env:
+      RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+      ENVIRONMENT: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Konfiguration prüfen
+        env:
+          AAD_CLIENT_SECRET: ${{ secrets.AAD_CLIENT_SECRET }}
+        run: |
+          for v in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID AZURE_RESOURCE_GROUP; do
+            case $v in
+              AZURE_CLIENT_ID) val='${{ vars.AZURE_CLIENT_ID }}' ;;
+              AZURE_TENANT_ID) val='${{ vars.AZURE_TENANT_ID }}' ;;
+              AZURE_SUBSCRIPTION_ID) val='${{ vars.AZURE_SUBSCRIPTION_ID }}' ;;
+              AZURE_RESOURCE_GROUP) val='${{ vars.AZURE_RESOURCE_GROUP }}' ;;
+            esac
+            [ -n "$val" ] || { echo "::error::GitHub-Environment-Variable $v fehlt"; exit 1; }
+          done
+          [ -n "$AAD_CLIENT_SECRET" ] || { echo "::error::Secret AAD_CLIENT_SECRET fehlt"; exit 1; }
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: functions-package
+          path: artifacts
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: artifacts/web
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Infrastruktur – what-if
+        uses: azure/cli@v2
+        env:
+          AAD_CLIENT_SECRET: ${{ secrets.AAD_CLIENT_SECRET }}
+        with:
+          inlineScript: |
+            az deployment group what-if \
+              --resource-group "$RG" \
+              --template-file infrastructure/main.bicep \
+              --parameters "infrastructure/parameters/${ENVIRONMENT}.bicepparam"
+
+      - name: Infrastruktur – deploy
+        id: infra
+        uses: azure/cli@v2
+        env:
+          AAD_CLIENT_SECRET: ${{ secrets.AAD_CLIENT_SECRET }}
+        with:
+          inlineScript: |
+            outputs=$(az deployment group create \
+              --resource-group "$RG" \
+              --name "deploy-${GITHUB_RUN_ID}" \
+              --template-file infrastructure/main.bicep \
+              --parameters "infrastructure/parameters/${ENVIRONMENT}.bicepparam" \
+              --query properties.outputs -o json)
+            echo "FUNC_APP=$(echo "$outputs" | jq -r .functionAppName.value)" >> "$GITHUB_ENV"
+            echo "SWA_NAME=$(echo "$outputs" | jq -r .staticWebAppName.value)" >> "$GITHUB_ENV"
+            echo "SWA_HOST=$(echo "$outputs" | jq -r .staticWebAppHostname.value)" >> "$GITHUB_ENV"
+
+      # [ANNAHME] config-zip wird für Flex Consumption unterstützt; sonst Azure/functions-action verwenden.
+      - name: Functions deployen
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            az functionapp deployment source config-zip \
+              --resource-group "$RG" --name "$FUNC_APP" \
+              --src artifacts/functions.zip
+
+      - name: SWA-Konfiguration vorbereiten (Tenant-ID einsetzen)
+        run: node scripts/prepare-swa-config.mjs artifacts/web/staticwebapp.config.json '${{ vars.AZURE_TENANT_ID }}'
+
+      - name: SWA-Deployment-Token holen
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            token=$(az staticwebapp secrets list --name "$SWA_NAME" --resource-group "$RG" --query properties.apiKey -o tsv)
+            echo "::add-mask::$token"
+            echo "SWA_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Frontend deployen
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ env.SWA_TOKEN }}
+          action: upload
+          app_location: artifacts/web
+          skip_app_build: true
+          skip_api_build: true
+
+      - name: Smoke-Test (Health, anonym)
+        run: |
+          for i in $(seq 1 12); do
+            code=$(curl -s -o /tmp/health.json -w '%{http_code}' "https://${SWA_HOST}/api/health" || true)
+            if [ "$code" = "200" ] && grep -q '"status":"ok"' /tmp/health.json; then
+              echo "Health ok"; cat /tmp/health.json; exit 0
+            fi
+            echo "Versuch $i: HTTP $code – warte 15 s"; sleep 15
+          done
+          echo "::error::Health-Check fehlgeschlagen"; exit 1

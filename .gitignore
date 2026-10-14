@@ -6,3 +6,4 @@ local.settings.json
 .env
 .env.*
 .azure/
+.deploy/

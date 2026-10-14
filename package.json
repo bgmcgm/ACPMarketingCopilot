@@ -15,7 +15,9 @@
     "test": "vitest run",
     "lint": "eslint .",
     "format": "prettier --check .",
-    "build:web": "npm run build -w @mcopilot/web"
+    "build:web": "npm run build -w @mcopilot/web",
+    "build": "tsc -b && npm run build -w @mcopilot/web",
+    "package:functions": "node scripts/package-functions.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",

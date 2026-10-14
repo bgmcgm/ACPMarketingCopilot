@@ -1,0 +1,19 @@
+# PROD wird nur manuell oder per Release-Tag ausgelöst. Das GitHub Environment "prod"
+# muss "Required reviewers" konfiguriert haben (manuelle Freigabe vor dem Deploy-Job).
+name: Deploy PROD
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  prod:
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: prod
+    secrets: inherit
