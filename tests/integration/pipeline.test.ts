@@ -9,6 +9,8 @@ import {
 } from "../../apps/functions/src/fetcher/safeFetcher.js";
 import { defaultRuleset } from "../../apps/functions/src/rules/index.js";
 import { defaultScoringConfig } from "../../apps/functions/src/scoring/scoring.js";
+import type { AiAssessmentInput, AiProvider } from "../../apps/functions/src/ai/provider.js";
+import { DisabledAiProvider } from "../../apps/functions/src/ai/claudeProvider.js";
 import { AuditPipeline } from "../../apps/functions/src/worker/auditPipeline.js";
 import { InMemoryAuditRepository, silentLogger } from "./helpers.js";
 
@@ -62,12 +64,14 @@ async function setup(
   fetcher: PageFetcher,
   doc: AuditDocument | null = queuedDoc(),
   maxAttempts = 3,
+  ai: AiProvider = new DisabledAiProvider("test-model"),
 ) {
   const repo = new InMemoryAuditRepository();
   if (doc) await repo.create(doc);
   const pipeline = new AuditPipeline({
     repo,
     fetcher,
+    ai,
     ruleset: defaultRuleset,
     scoring: defaultScoringConfig,
     logger: silentLogger,
@@ -105,7 +109,7 @@ describe("AuditPipeline – success", () => {
       title: "Marketing Automation Software | Beispiel GmbH",
       lang: "de",
     });
-    expect(doc.ai).toBeUndefined(); // KI folgt in Inkrement 7
+    expect(doc.ai).toMatchObject({ status: "skipped", source: "ai" });
     expect(doc.error).toBeUndefined();
   });
 
@@ -246,5 +250,101 @@ describe("AuditPipeline – failures", () => {
     await expect(pipeline.process(msg)).rejects.toThrow(); // replace auf gelöschtes Dokument → Retry → danach "nicht gefunden"
     await expect(pipeline.process(msg)).resolves.toBeUndefined();
     expect(repo.docs.size).toBe(0);
+  });
+});
+
+describe("AuditPipeline – AI integration", () => {
+  const completedAi = {
+    status: "completed" as const,
+    provider: "anthropic" as const,
+    model: "m",
+    promptVersion: "1",
+    source: "ai" as const,
+    result: { executiveSummary: "s", marketingFindings: [], priorities: [], limitations: [] },
+  };
+
+  it("passes only page excerpt and findings to the AI and stores its result separately from findings", async () => {
+    let received: AiAssessmentInput | undefined;
+    const ai: AiProvider = {
+      async assess(input) {
+        received = input;
+        return completedAi;
+      },
+    };
+    const { repo, pipeline } = await setup(
+      new FakeFetcher(async () => okResult(fixture("good.html"))),
+      queuedDoc(),
+      3,
+      ai,
+    );
+    await pipeline.process(msg);
+    const doc = await reload(repo);
+    expect(doc.ai).toEqual(completedAi);
+    expect(received!.technicalFindings).toHaveLength(doc.findings!.length);
+    expect(received!.page.title).toBe("Marketing Automation Software | Beispiel GmbH");
+    const sent = JSON.stringify(received);
+    expect(sent).not.toContain("secret@example.com");
+    expect(sent).not.toContain("<script");
+    // KI-Ergebnis verändert weder Findings noch Score
+    expect(doc.findings!.every((f) => f.source === "measured")).toBe(true);
+  });
+
+  it("completes the audit even if the AI provider fails or throws", async () => {
+    const failing: AiProvider = {
+      async assess() {
+        return {
+          ...completedAi,
+          status: "failed",
+          result: undefined,
+          error: { code: "PROVIDER_ERROR", message: "x" },
+        };
+      },
+    };
+    const a = await setup(
+      new FakeFetcher(async () => okResult(fixture("good.html"))),
+      queuedDoc(),
+      3,
+      failing,
+    );
+    await a.pipeline.process(msg);
+    expect((await reload(a.repo)).status).toBe("completed");
+    expect((await reload(a.repo)).ai?.status).toBe("failed");
+
+    const throwing: AiProvider = {
+      async assess() {
+        throw new Error("boom");
+      },
+    };
+    const b = await setup(
+      new FakeFetcher(async () => okResult(fixture("good.html"))),
+      queuedDoc(),
+      3,
+      throwing,
+    );
+    await b.pipeline.process(msg);
+    const doc = await reload(b.repo);
+    expect(doc.status).toBe("completed");
+    expect(doc.ai).toMatchObject({ status: "failed", error: { code: "PROVIDER_ERROR" } });
+    expect(doc.score).toBeDefined();
+  });
+
+  it("does not call the AI when the fetch failed", async () => {
+    let called = false;
+    const ai: AiProvider = {
+      async assess() {
+        called = true;
+        return completedAi;
+      },
+    };
+    const { pipeline } = await setup(
+      new FakeFetcher(async () => {
+        throw new FetchError("TARGET_BLOCKED", "x");
+      }),
+      queuedDoc(),
+      3,
+      ai,
+    );
+    await pipeline.process(msg);
+    expect(called).toBe(false);
   });
 });

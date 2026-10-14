@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.133.0",
     "@azure/cosmos": "^4.10.1",
     "@azure/functions": "^4.16.5",
     "@azure/identity": "^4.14.0",

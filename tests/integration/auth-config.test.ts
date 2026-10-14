@@ -6,6 +6,8 @@ import { principalHeader } from "./helpers.js";
 const base = {
   COSMOS_ENDPOINT: "https://c.documents.azure.com:443/",
   STORAGE_QUEUE_ACCOUNT_NAME: "stacct",
+  AI_MODEL: "model-x",
+  ANTHROPIC_API_KEY: "key",
 };
 
 describe("parsePrincipal", () => {
@@ -51,6 +53,29 @@ describe("loadConfig", () => {
     expect(c.quotas).toEqual({ maxActive: 3, maxPerDay: 50 });
     expect(c.allowedRole).toBeNull();
     expect(c.scoring.categoryWeights.seo).toBe(25);
+  });
+  it("configures the AI provider and keeps the key out of defaults", () => {
+    const c = loadConfig(base);
+    expect(c.ai).toEqual({
+      enabled: true,
+      model: "model-x",
+      apiKey: "key",
+      timeoutMs: 60000,
+      maxOutputTokens: 4096,
+      outputLanguage: "Deutsch",
+    });
+  });
+  it("requires model and key unless AI is disabled", () => {
+    const noModel: Record<string, string | undefined> = { ...base, AI_MODEL: undefined };
+    const noKey: Record<string, string | undefined> = { ...base, ANTHROPIC_API_KEY: undefined };
+    expect(() => loadConfig(noModel)).toThrow(/AI_MODEL/);
+    expect(() => loadConfig(noKey)).toThrow(/ANTHROPIC_API_KEY/);
+    expect(
+      loadConfig({ ...noModel, ANTHROPIC_API_KEY: undefined, AI_ENABLED: "false" }).ai,
+    ).toEqual({
+      enabled: false,
+    });
+    expect(() => loadConfig({ ...base, AI_ENABLED: "maybe" })).toThrow(/AI_ENABLED/);
   });
   it("fails fast on missing or invalid values", () => {
     expect(() => loadConfig({})).toThrow(/COSMOS_ENDPOINT/);

@@ -7,15 +7,16 @@ Architektur und Entscheidungen: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 
 ## Status
 
-| Inkrement | Inhalt                                                 | Stand  |
-| --------- | ------------------------------------------------------ | ------ |
-| 0–1       | Monorepo, CI, `shared-types`                           | fertig |
-| 2         | HTML-Analyzer, Rules Engine (29 Regeln)                | fertig |
-| 3         | Scoring (konfigurierbar)                               | fertig |
-| 4         | SSRF-sicherer URL-Validator + Fetcher                  | fertig |
-| 5         | Config, Persistenz, Auth, HTTP-API, Quoten             | fertig |
-| 6         | Worker-Pipeline (ohne KI), Idempotenz, Poison-Handling | fertig |
-| 7–11      | Claude, Frontend, Bicep, Pipelines, Hardening          | offen  |
+| Inkrement | Inhalt                                                 | Stand                                   |
+| --------- | ------------------------------------------------------ | --------------------------------------- |
+| 0–1       | Monorepo, CI, `shared-types`                           | fertig                                  |
+| 2         | HTML-Analyzer, Rules Engine (29 Regeln)                | fertig                                  |
+| 3         | Scoring (konfigurierbar)                               | fertig                                  |
+| 4         | SSRF-sicherer URL-Validator + Fetcher                  | fertig                                  |
+| 5         | Config, Persistenz, Auth, HTTP-API, Quoten             | fertig                                  |
+| 6         | Worker-Pipeline (ohne KI), Idempotenz, Poison-Handling | fertig                                  |
+| 7         | KI-Bewertung (Claude, strukturierte JSON-Ausgabe)      | fertig (nur gegen Test-Doubles geprüft) |
+| 8–11      | Frontend, Bicep, Pipelines, Hardening                  | offen                                   |
 
 ## Struktur
 

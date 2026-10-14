@@ -1,5 +1,7 @@
 import type { AuditCategory, AuditErrorCode, AuditQueueMessage } from "@mcopilot/shared-types";
 import { analyzeHtml } from "../analyzer/htmlAnalyzer.js";
+import { buildAiInput, type AiAssessmentInput, type AiProvider } from "../ai/provider.js";
+import { PROMPT_VERSION } from "../ai/prompt.js";
 import type { AuditDocument } from "../domain/auditDocument.js";
 import { FetchError, type PageFetcher } from "../fetcher/safeFetcher.js";
 import type { Logger } from "../http/handlers.js";
@@ -12,6 +14,7 @@ import { toPageRecord } from "./pageRecord.js";
 export interface AuditPipelineDeps {
   repo: AuditRepository;
   fetcher: PageFetcher;
+  ai: AiProvider;
   ruleset: Ruleset;
   scoring: ScoringConfig;
   logger: Logger;
@@ -79,7 +82,10 @@ export class AuditPipeline {
     }
 
     // Schritte 7–10: Analyse, Regeln, Score
-    let result: Pick<AuditDocument, "page" | "findings" | "score">;
+    let analysis: {
+      record: Pick<AuditDocument, "page" | "findings" | "score">;
+      aiInput: AiAssessmentInput;
+    };
     try {
       const snapshot = analyzeHtml({
         html: fetched.html,
@@ -89,10 +95,13 @@ export class AuditPipeline {
       });
       const modules: AuditCategory[] = running.input.modules;
       const findings = evaluateRuleset(snapshot, this.d.ruleset, modules);
-      result = {
-        page: toPageRecord(snapshot),
-        findings,
-        score: computeScore(findings, modules, this.d.scoring),
+      analysis = {
+        record: {
+          page: toPageRecord(snapshot),
+          findings,
+          score: computeScore(findings, modules, this.d.scoring),
+        },
+        aiInput: buildAiInput(snapshot, running.input.normalizedUrl, findings, modules),
       };
     } catch (err) {
       this.d.logger.error("Analyse fehlgeschlagen", {
@@ -102,6 +111,9 @@ export class AuditPipeline {
       await this.fail(running, "ANALYSIS_FAILED", "Die Seite konnte nicht analysiert werden.");
       return;
     }
+
+    // Schritte 9–11: KI-Bewertung. Ein KI-Fehler lässt das Audit nicht scheitern (technischer Report bleibt gültig).
+    const ai = await this.assessSafely(analysis.aiInput, msg.auditId);
 
     // Schritt 12: Ergebnis speichern
     const completed: AuditDocument = {
@@ -117,13 +129,37 @@ export class AuditPipeline {
         durationMs: fetched.durationMs,
         fetchedAt: fetched.fetchedAt,
       },
-      ...result,
+      ...analysis.record,
+      ai,
     };
     await this.d.repo.replace(completed);
     log("Audit abgeschlossen", {
       overallScore: completed.score?.overall ?? null,
       findings: completed.findings?.length ?? 0,
     });
+  }
+
+  private async assessSafely(
+    input: AiAssessmentInput,
+    auditId: string,
+  ): Promise<NonNullable<AuditDocument["ai"]>> {
+    try {
+      return await this.d.ai.assess(input);
+    } catch (err) {
+      // Provider sollen nicht werfen; falls doch, wird der Fehler wie ein Providerfehler behandelt.
+      this.d.logger.error("KI-Provider hat unerwartet geworfen", {
+        auditId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return {
+        status: "failed",
+        provider: "anthropic",
+        model: "unknown",
+        promptVersion: PROMPT_VERSION,
+        source: "ai",
+        error: { code: "PROVIDER_ERROR", message: "Die KI-Bewertung ist derzeit nicht verfügbar." },
+      };
+    }
   }
 
   /** Für die Poison Queue: ein nie abgeschlossenes Audit darf nicht ewig "queued/running" bleiben. */

@@ -6,6 +6,8 @@ import { AuditService } from "./services/auditService.js";
 import { Handlers, type Logger } from "./http/handlers.js";
 import { SafeFetcher } from "./fetcher/safeFetcher.js";
 import { AuditPipeline } from "./worker/auditPipeline.js";
+import Anthropic from "@anthropic-ai/sdk";
+import { ClaudeProvider, DisabledAiProvider } from "./ai/claudeProvider.js";
 
 export const APP_VERSION = process.env["APP_VERSION"] ?? "0.1.0";
 
@@ -41,9 +43,22 @@ export function getContainer(logger: Logger): Container {
     maxLength: 2048,
     userAgent: "MarketingCopilotAuditor/1.0 (+internal)",
   });
+  const ai = config.ai.enabled
+    ? new ClaudeProvider(
+        new Anthropic({ apiKey: config.ai.apiKey }),
+        {
+          model: config.ai.model,
+          timeoutMs: config.ai.timeoutMs,
+          maxOutputTokens: config.ai.maxOutputTokens,
+          outputLanguage: config.ai.outputLanguage,
+        },
+        logger,
+      )
+    : new DisabledAiProvider();
   const pipeline = new AuditPipeline({
     repo,
     fetcher,
+    ai,
     ruleset: defaultRuleset,
     scoring: config.scoring,
     logger,

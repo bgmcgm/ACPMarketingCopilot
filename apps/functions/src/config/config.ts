@@ -26,6 +26,12 @@ const EnvSchema = z.object({
   MAX_ACTIVE_AUDITS_PER_USER: int(3),
   MAX_AUDITS_PER_USER_PER_DAY: int(50),
   ALLOWED_ROLE: z.string().optional(),
+  AI_ENABLED: z.enum(["true", "false"]).default("true"),
+  AI_MODEL: z.string().optional(),
+  ANTHROPIC_API_KEY: z.string().optional(),
+  AI_TIMEOUT_MS: int(60_000, 1000),
+  AI_MAX_OUTPUT_TOKENS: int(4096, 256),
+  AI_OUTPUT_LANGUAGE: z.string().min(1).default("Deutsch"),
 });
 
 export interface AppConfig {
@@ -42,6 +48,16 @@ export interface AppConfig {
   auditTtlSeconds: number;
   quotas: { maxActive: number; maxPerDay: number };
   allowedRole: string | null;
+  ai:
+    | { enabled: false }
+    | {
+        enabled: true;
+        model: string;
+        apiKey: string;
+        timeoutMs: number;
+        maxOutputTokens: number;
+        outputLanguage: string;
+      };
 }
 
 /** Validiert die Umgebung beim Start; fehlende Pflichtwerte lassen den Start fehlschlagen. */
@@ -55,6 +71,12 @@ export function loadConfig(env: Record<string, string | undefined>): AppConfig {
   const ports = csv(e.FETCH_ALLOWED_PORTS).map(Number);
   if (ports.some((p) => !Number.isInteger(p) || p < 1 || p > 65535)) {
     throw new Error("Ungültige Konfiguration: FETCH_ALLOWED_PORTS");
+  }
+  const aiEnabled = e.AI_ENABLED === "true";
+  if (aiEnabled && (!e.AI_MODEL?.trim() || !e.ANTHROPIC_API_KEY?.trim())) {
+    throw new Error(
+      "Ungültige Konfiguration: AI_MODEL und ANTHROPIC_API_KEY sind erforderlich, solange AI_ENABLED nicht 'false' ist",
+    );
   }
   return {
     cosmos: {
@@ -74,5 +96,15 @@ export function loadConfig(env: Record<string, string | undefined>): AppConfig {
     auditTtlSeconds: e.AUDIT_TTL_DAYS * 86_400,
     quotas: { maxActive: e.MAX_ACTIVE_AUDITS_PER_USER, maxPerDay: e.MAX_AUDITS_PER_USER_PER_DAY },
     allowedRole: e.ALLOWED_ROLE?.trim() ? e.ALLOWED_ROLE.trim() : null,
+    ai: aiEnabled
+      ? {
+          enabled: true,
+          model: (e.AI_MODEL as string).trim(),
+          apiKey: (e.ANTHROPIC_API_KEY as string).trim(),
+          timeoutMs: e.AI_TIMEOUT_MS,
+          maxOutputTokens: e.AI_MAX_OUTPUT_TOKENS,
+          outputLanguage: e.AI_OUTPUT_LANGUAGE,
+        }
+      : { enabled: false },
   };
 }
