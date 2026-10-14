@@ -1,0 +1,12 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "declaration": false,
+    "rootDir": "..",
+    "types": ["node"]
+  },
+  "include": ["./**/*.ts"],
+  "references": [{ "path": "../packages/shared-types" }, { "path": "../apps/functions" }]
+}

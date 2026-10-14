@@ -1,0 +1,11 @@
+{
+  "name": "@mcopilot/functions",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@mcopilot/shared-types": "*",
+    "cheerio": "^1.0.0",
+    "zod": "^3.23.0"
+  }
+}

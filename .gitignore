@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.tsbuildinfo
+coverage/
+local.settings.json
+.env
+.env.*
+.azure/
