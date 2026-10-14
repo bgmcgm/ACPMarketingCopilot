@@ -14,3 +14,12 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
+  infra:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bicep build (Syntax und Typprüfung)
+        run: |
+          az bicep build --file infrastructure/main.bicep --stdout > /dev/null
+          az bicep build-params --file infrastructure/parameters/dev.bicepparam --stdout > /dev/null
+          az bicep build-params --file infrastructure/parameters/prod.bicepparam --stdout > /dev/null
