@@ -68,6 +68,8 @@ Typische Änderungen:
 | Texte/Aussehen der Oberfläche ändern | `apps/web/src/pages/` und `apps/web/src/components/`                     |
 | den KI-Prompt anpassen               | `apps/functions/src/ai/prompt.ts` (Version `PROMPT_VERSION` mit erhöhen) |
 
+Für mehrere Personen auf einem eigenen Server (ohne Azure, Passwortschutz, nur internes Netz): [`docs/pilot-server.md`](docs/pilot-server.md).
+
 Später in Azure: Der Code bleibt unverändert, es kommt nur die Infrastruktur dazu (`docs/runbook.md`).
 
 **Demo-Modus (ohne Azure, ohne Zugangsdaten):** `npm install && npm run demo`, dann `http://localhost:7071` öffnen. Es läuft die echte Anwendungslogik (Abruf mit SSRF-Schutz, Analyse, Regeln, Score, API, Worker, Oberfläche); nur Cosmos DB, Queue und Login sind durch Arbeitsspeicher bzw. einen festen Demo-Benutzer ersetzt. Daten sind nach Neustart weg. Die KI-Bewertung läuft nur, wenn `AI_MODEL` und `ANTHROPIC_API_KEY` in der Shell gesetzt sind, sonst ist sie ausgeschaltet. Der Demo-Code liegt in `apps/functions/src/dev/` und ist nicht im Deploy-Paket.

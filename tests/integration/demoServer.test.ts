@@ -123,3 +123,93 @@ describe("Demo-Server (gesamter Anwendungsstapel in einem Prozess)", () => {
     }
   });
 });
+
+describe("Demo-Server mit Passwortschutz (Betrieb für mehrere Personen)", () => {
+  let secured: http.Server;
+  let sbase = "";
+  const PASSWORD = "ein-langes-geheimes-passwort";
+  const auth = (user: string, pw = PASSWORD): Record<string, string> => ({
+    authorization: `Basic ${Buffer.from(`${user}:${pw}`).toString("base64")}`,
+  });
+
+  beforeAll(async () => {
+    secured = createDemoServer({ fetcher, webRoot, logger: quietLogger, password: PASSWORD });
+    await new Promise<void>((r) => secured.listen(0, "127.0.0.1", r));
+    sbase = `http://127.0.0.1:${(secured.address() as AddressInfo).port}`;
+  });
+  afterAll(() => void secured.close());
+
+  const call = async (path: string, headers: Record<string, string>, init: RequestInit = {}) => {
+    const res = await fetch(sbase + path, {
+      ...init,
+      headers: { ...headers, ...(init.headers as Record<string, string>) },
+    });
+    return { status: res.status, text: await res.text(), headers: res.headers };
+  };
+
+  it("verlangt Anmeldung für alles – Oberfläche, API und Health", async () => {
+    for (const path of ["/", "/api/audits", "/api/health", "/.auth/me", "/assets/app.js"]) {
+      const r = await call(path, {});
+      expect(r.status, path).toBe(401);
+      expect(r.headers.get("www-authenticate")).toMatch(/^Basic/);
+    }
+  });
+
+  it("weist falsche Passwörter und fehlerhafte Header ab", async () => {
+    expect((await call("/api/audits", auth("anna", "falsch"))).status).toBe(401);
+    expect((await call("/api/audits", auth("anna", ""))).status).toBe(401);
+    expect((await call("/api/audits", { authorization: "Basic !!!" })).status).toBe(401);
+    expect((await call("/api/audits", { authorization: "Bearer abc" })).status).toBe(401);
+    expect((await call("/api/audits", auth("", PASSWORD))).status).toBe(401); // leerer Benutzername
+  });
+
+  it("trennt Benutzer: jede Person sieht nur eigene Audits", async () => {
+    const created = await call(
+      "/api/audits",
+      { ...auth("anna"), "content-type": "application/json" },
+      {
+        method: "POST",
+        body: JSON.stringify({ url: "https://example.com/" }),
+      },
+    );
+    expect(created.status).toBe(202);
+    const id = (JSON.parse(created.text) as { id: string }).id;
+
+    expect((await call(`/api/audits/${id}`, auth("anna"))).status).toBe(200);
+    expect((await call(`/api/audits/${id}`, auth("bernd"))).status).toBe(404);
+    const bernd = JSON.parse((await call("/api/audits", auth("bernd"))).text) as {
+      items: unknown[];
+    };
+    expect(bernd.items).toHaveLength(0);
+    expect(
+      JSON.parse((await call("/.auth/me", auth("Anna"))).text).clientPrincipal.userDetails,
+    ).toBe("anna");
+  });
+
+  it("ignoriert einen mitgeschickten x-ms-client-principal-Header (keine Identitätsübernahme)", async () => {
+    const forged = Buffer.from(
+      JSON.stringify({ userId: "user:anna", userRoles: ["authenticated"] }),
+    ).toString("base64");
+    const created = await call(
+      "/api/audits",
+      { ...auth("anna"), "content-type": "application/json" },
+      {
+        method: "POST",
+        body: JSON.stringify({ url: "https://example.com/" }),
+      },
+    );
+    const id = (JSON.parse(created.text) as { id: string }).id;
+    const r = await call(`/api/audits/${id}`, {
+      ...auth("bernd"),
+      "x-ms-client-principal": forged,
+    });
+    expect(r.status).toBe(404);
+  });
+
+  it("bereinigt Benutzernamen (keine Sonderzeichen, begrenzte Länge)", async () => {
+    const { sanitizeUserName } = await import("../../apps/functions/src/dev/demoServer.js");
+    expect(sanitizeUserName("Max.Muster@Firma.DE")).toBe("max.muster@firma.de");
+    expect(sanitizeUserName('a/../b"<script>')).toBe("a..bscript");
+    expect(sanitizeUserName("x".repeat(100))).toHaveLength(40);
+  });
+});

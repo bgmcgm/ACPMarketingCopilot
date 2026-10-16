@@ -7,6 +7,7 @@
  * Die KI-Bewertung läuft nur, wenn AI_MODEL und ANTHROPIC_API_KEY gesetzt sind; sonst ist sie "skipped".
  */
 import Anthropic from "@anthropic-ai/sdk";
+import { timingSafeEqual } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import http from "node:http";
 import { extname, join, normalize, resolve, sep } from "node:path";
@@ -26,14 +27,22 @@ import { InMemoryAuditRepository } from "./inMemoryAuditRepository.js";
 
 export const DEMO_USER = { userId: "demo-user", userDetails: "demo@lokal" };
 
-const DEMO_PRINCIPAL = Buffer.from(
-  JSON.stringify({
-    identityProvider: "demo",
-    userId: DEMO_USER.userId,
-    userDetails: DEMO_USER.userDetails,
-    userRoles: ["anonymous", "authenticated"],
-  }),
-).toString("base64");
+const principalFor = (user: { userId: string; userDetails: string }): string =>
+  Buffer.from(
+    JSON.stringify({
+      identityProvider: "demo",
+      userId: user.userId,
+      userDetails: user.userDetails,
+      userRoles: ["anonymous", "authenticated"],
+    }),
+  ).toString("base64");
+
+/** Benutzername aus Basic-Auth: nur harmlose Zeichen, begrenzte Länge. */
+export const sanitizeUserName = (raw: string): string =>
+  raw
+    .toLowerCase()
+    .replace(/[^a-z0-9._@-]/g, "")
+    .slice(0, 40);
 
 /** Führt Jobs im selben Prozess aus und wiederholt sie wie die echte Queue (maxDequeueCount = 3). */
 class InProcessQueue implements JobQueue {
@@ -68,6 +77,12 @@ export interface DemoOptions {
   /** Verzeichnis mit dem gebauten Frontend (apps/web/dist); null = nur API. */
   webRoot?: string | null;
   logger?: Logger;
+  /**
+   * Gemeinsames Passwort (HTTP Basic Auth) für den Betrieb auf einem Server für mehrere Personen.
+   * Der Benutzername wird zur Benutzer-ID (jede Person sieht nur ihre eigenen Audits).
+   * Ohne Passwort gibt es keine Anmeldung (nur für localhost).
+   */
+  password?: string;
 }
 
 const consoleLogger: Logger = {
@@ -123,6 +138,27 @@ const readBody = (req: http.IncomingMessage): Promise<string> =>
     req.on("end", () => resolveBody(Buffer.concat(chunks).toString("utf8")));
     req.on("error", reject);
   });
+
+const safeEqual = (a: string, b: string): boolean => {
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
+};
+
+/** @returns den Benutzer oder null, wenn die Anmeldung fehlt/falsch ist. */
+function authenticate(
+  header: string | undefined,
+  password: string,
+): { userId: string; userDetails: string } | null {
+  const m = /^Basic\s+(.+)$/i.exec(header ?? "");
+  if (!m) return null;
+  const decoded = Buffer.from(m[1] as string, "base64").toString("utf8");
+  const idx = decoded.indexOf(":");
+  if (idx < 0) return null;
+  const name = sanitizeUserName(decoded.slice(0, idx));
+  if (!name || !safeEqual(decoded.slice(idx + 1), password)) return null;
+  return { userId: `user:${name}`, userDetails: name };
+}
 
 export function createDemoServer(opts: DemoOptions = {}): http.Server {
   const logger = opts.logger ?? consoleLogger;
@@ -188,14 +224,26 @@ export function createDemoServer(opts: DemoOptions = {}): http.Server {
       const url = new URL(req.url ?? "/", "http://localhost");
       const method = req.method ?? "GET";
 
+      let user = DEMO_USER;
+      if (opts.password) {
+        const authed = authenticate(req.headers.authorization, opts.password);
+        if (!authed) {
+          res
+            .writeHead(401, {
+              "www-authenticate": 'Basic realm="Marketing Copilot", charset="UTF-8"',
+            })
+            .end("Anmeldung erforderlich.");
+          return;
+        }
+        user = authed;
+      }
+
       if (url.pathname === "/.auth/me") {
-        res
-          .writeHead(200, { "content-type": "application/json" })
-          .end(
-            JSON.stringify({
-              clientPrincipal: { userId: DEMO_USER.userId, userDetails: DEMO_USER.userDetails },
-            }),
-          );
+        res.writeHead(200, { "content-type": "application/json" }).end(
+          JSON.stringify({
+            clientPrincipal: { userId: user.userId, userDetails: user.userDetails },
+          }),
+        );
         return;
       }
       if (!url.pathname.startsWith("/api/")) {
@@ -208,11 +256,11 @@ export function createDemoServer(opts: DemoOptions = {}): http.Server {
         if (!m || r.method !== method) continue;
         const text = method === "POST" ? await readBody(req).catch(() => "") : "";
         const apiReq: ApiRequest = {
-          // Demo-Benutzer wird immer gesetzt (kein Login im Demo-Modus).
+          // Der Benutzer wird serverseitig gesetzt; ein mitgeschickter Header wird ignoriert.
           headers: {
             get: (name) =>
               name.toLowerCase() === "x-ms-client-principal"
-                ? DEMO_PRINCIPAL
+                ? principalFor(user)
                 : ((req.headers[name.toLowerCase()] as string | undefined) ?? null),
           },
           params: Object.fromEntries(r.keys.map((k, i) => [k, decodeURIComponent(m[i + 1] ?? "")])),
@@ -262,14 +310,26 @@ function aiFromEnv(logger: Logger): AiProvider {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const port = Number(process.env["DEMO_PORT"] ?? 7071);
   const webRoot = resolve(fileURLToPath(new URL("../../../web/dist", import.meta.url)));
+  const host = process.env["DEMO_HOST"]?.trim() || "127.0.0.1";
+  const password = process.env["DEMO_PASSWORD"]?.trim() || undefined;
+  const loopback = ["127.0.0.1", "localhost", "::1"].includes(host);
+  if (!loopback && (!password || password.length < 12)) {
+    console.error(
+      "Abbruch: Für DEMO_HOST außerhalb von localhost ist DEMO_PASSWORD (mindestens 12 Zeichen) Pflicht.\n" +
+        "Ohne Anmeldung darf der Demo-Modus nicht im Netzwerk erreichbar sein.",
+    );
+    process.exit(1);
+  }
   const server = createDemoServer({
     ai: aiFromEnv(consoleLogger),
     webRoot: existsSync(webRoot) ? webRoot : null,
+    ...(password ? { password } : {}),
   });
-  // Nur lokal erreichbar.
-  server.listen(port, "127.0.0.1", () => {
+  server.listen(port, host, () => {
     console.log(
-      `\nMarketing Copilot – Demo-Modus\n  Oberfläche: http://localhost:${port}\n  (Daten nur im Arbeitsspeicher, kein Login, Strg+C beendet)\n`,
+      `\nMarketing Copilot – Demo-Modus\n  Adresse: http://${host === "0.0.0.0" ? "<server-name>" : host}:${port}\n` +
+        `  ${password ? "Anmeldung: Benutzername frei wählbar + gemeinsames Passwort (im Netz nur über HTTPS betreiben!)" : "Kein Login (nur lokal)"}\n` +
+        "  Daten nur im Arbeitsspeicher, Strg+C beendet\n",
     );
   });
 }
