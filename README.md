@@ -43,7 +43,7 @@ npm run typecheck # TypeScript (strict)
 npm run lint
 ```
 
-Frontend lokal ansehen (nur Oberfläche, ohne Backend): `npm run dev -w @mcopilot/web`. Mit Login-Emulation und API: Azure Static Web Apps CLI (`swa start`) – folgt mit den Deploy-Skripten.
+**Demo-Modus (ohne Azure, ohne Zugangsdaten):** `npm install && npm run demo`, dann `http://localhost:7071` öffnen. Es läuft die echte Anwendungslogik (Abruf mit SSRF-Schutz, Analyse, Regeln, Score, API, Worker, Oberfläche); nur Cosmos DB, Queue und Login sind durch Arbeitsspeicher bzw. einen festen Demo-Benutzer ersetzt. Daten sind nach Neustart weg. Die KI-Bewertung läuft nur, wenn `AI_MODEL` und `ANTHROPIC_API_KEY` in der Shell gesetzt sind, sonst ist sie ausgeschaltet. Der Demo-Code liegt in `apps/functions/src/dev/` und ist nicht im Deploy-Paket.
 
 Wo lese ich was?
 

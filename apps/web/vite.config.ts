@@ -13,7 +13,7 @@ export default defineConfig({
   },
   server: {
     // Lokal: Functions Core Tools (7071). Besser: `swa start` (inkl. Auth-Emulation).
-    proxy: { "/api": "http://localhost:7071" },
+    proxy: { "/api": "http://localhost:7071", "/.auth": "http://localhost:7071" },
   },
   build: { outDir: "dist", sourcemap: true },
 });

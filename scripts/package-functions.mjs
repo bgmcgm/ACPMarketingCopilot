@@ -4,7 +4,7 @@
 // Voraussetzung: `npm run build` (tsc -b) wurde ausgeführt.
 import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -28,7 +28,9 @@ mkdirSync(out, { recursive: true });
 cpSync(join(fnDir, "host.json"), join(out, "host.json"));
 cpSync(join(fnDir, "dist"), join(out, "dist"), {
   recursive: true,
-  filter: (src) => !src.endsWith(".map") && !src.endsWith(".tsbuildinfo"),
+  // Der lokale Demo-Modus (dist/dev) gehört nicht ins Deploy-Paket.
+  filter: (src) =>
+    !src.endsWith(".map") && !src.endsWith(".tsbuildinfo") && !src.includes(`${sep}dist${sep}dev`),
 });
 
 const pkg = JSON.parse(readFileSync(join(fnDir, "package.json"), "utf8"));
