@@ -24,6 +24,14 @@ import { defaultScoringConfig } from "../scoring/scoring.js";
 import { AuditService } from "../services/auditService.js";
 import { AuditPipeline } from "../worker/auditPipeline.js";
 import { InMemoryAuditRepository } from "./inMemoryAuditRepository.js";
+import {
+  LoginRateLimiter,
+  loginPage,
+  parseCookie,
+  SESSION_COOKIE,
+  SESSION_TTL_MS,
+  SessionSigner,
+} from "./loginSession.js";
 
 export const DEMO_USER = { userId: "demo-user", userDetails: "demo@lokal" };
 
@@ -81,8 +89,11 @@ export interface DemoOptions {
    * Gemeinsames Passwort (HTTP Basic Auth) für den Betrieb auf einem Server für mehrere Personen.
    * Der Benutzername wird zur Benutzer-ID (jede Person sieht nur ihre eigenen Audits).
    * Ohne Passwort gibt es keine Anmeldung (nur für localhost).
+   * Anmeldung per Anmeldeseite (/login) und Sitzungs-Cookie; HTTP Basic funktioniert weiter für Skripte.
    */
   password?: string;
+  /** Uhr (Millisekunden) – nur für Tests. */
+  now?: () => number;
 }
 
 const consoleLogger: Logger = {
@@ -126,13 +137,13 @@ const ROUTES: Route[] = [
 ];
 
 const MAX_BODY = 1_000_000;
-const readBody = (req: http.IncomingMessage): Promise<string> =>
+const readBody = (req: http.IncomingMessage, limit = MAX_BODY): Promise<string> =>
   new Promise((resolveBody, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
     req.on("data", (c: Buffer) => {
       size += c.length;
-      if (size > MAX_BODY) return void req.destroy(new Error("body too large"));
+      if (size > limit) return void req.destroy(new Error("body too large"));
       chunks.push(c);
     });
     req.on("end", () => resolveBody(Buffer.concat(chunks).toString("utf8")));
@@ -204,6 +215,8 @@ export function createDemoServer(opts: DemoOptions = {}): http.Server {
     logger,
   });
   const webRoot = opts.webRoot ? resolve(opts.webRoot) : null;
+  const signer = new SessionSigner(undefined, opts.now);
+  const limiter = new LoginRateLimiter(10, 5 * 60_000, opts.now);
 
   const serveStatic = (urlPath: string, res: http.ServerResponse): void => {
     if (!webRoot) return void res.writeHead(404).end("Frontend nicht gebaut (npm run build:web).");
@@ -226,13 +239,65 @@ export function createDemoServer(opts: DemoOptions = {}): http.Server {
 
       let user = DEMO_USER;
       if (opts.password) {
-        const authed = authenticate(req.headers.authorization, opts.password);
-        if (!authed) {
-          res
-            .writeHead(401, {
-              "www-authenticate": 'Basic realm="Marketing Copilot", charset="UTF-8"',
+        const secure = req.headers["x-forwarded-proto"] === "https" ? "; Secure" : "";
+        const cookie = (value: string, maxAgeS: number): string =>
+          `${SESSION_COOKIE}=${value}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAgeS}${secure}`;
+        const page = (status: number, message?: string): void =>
+          void res
+            .writeHead(status, {
+              "content-type": "text/html; charset=utf-8",
+              "cache-control": "no-store",
+              "x-frame-options": "DENY",
+              "content-security-policy":
+                "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
             })
-            .end("Anmeldung erforderlich.");
+            .end(loginPage(message));
+        const sessionName = signer.verify(parseCookie(req.headers.cookie, SESSION_COOKIE));
+        const authed = sessionName
+          ? { userId: `user:${sessionName}`, userDetails: sessionName }
+          : authenticate(req.headers.authorization, opts.password);
+
+        if (url.pathname === "/.auth/logout") {
+          res.writeHead(303, { location: "/login", "set-cookie": cookie("", 0) }).end();
+          return;
+        }
+        if (url.pathname === "/login") {
+          if (method === "POST") {
+            const ip = req.socket.remoteAddress ?? "unbekannt";
+            if (limiter.blocked(ip))
+              return page(
+                429,
+                "Zu viele Fehlversuche. Bitte in ein paar Minuten erneut versuchen.",
+              );
+            const form = new URLSearchParams(await readBody(req, 10_000).catch(() => ""));
+            const name = sanitizeUserName(form.get("name") ?? "");
+            const given = form.get("password") ?? "";
+            if (name && safeEqual(given, opts.password)) {
+              limiter.reset(ip);
+              res
+                .writeHead(303, {
+                  location: "/",
+                  "set-cookie": cookie(signer.issue(name), SESSION_TTL_MS / 1000),
+                })
+                .end();
+              return;
+            }
+            limiter.fail(ip);
+            return page(401, "Name oder Passwort falsch.");
+          }
+          if (method === "GET" && authed) return void res.writeHead(303, { location: "/" }).end();
+          if (method === "GET") return page(200);
+          return void res.writeHead(405).end();
+        }
+        if (!authed) {
+          const wantsHtml = (req.headers.accept ?? "").includes("text/html");
+          if (method === "GET" && wantsHtml && !url.pathname.startsWith("/api/")) {
+            res.writeHead(303, { location: "/login" }).end();
+          } else {
+            res
+              .writeHead(401, { "content-type": "text/plain; charset=utf-8" })
+              .end("Anmeldung erforderlich.");
+          }
           return;
         }
         user = authed;
@@ -328,7 +393,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   server.listen(port, host, () => {
     console.log(
       `\nMarketing Copilot – Demo-Modus\n  Adresse: http://${host === "0.0.0.0" ? "<server-name>" : host}:${port}\n` +
-        `  ${password ? "Anmeldung: Benutzername frei wählbar + gemeinsames Passwort (im Netz nur über HTTPS betreiben!)" : "Kein Login (nur lokal)"}\n` +
+        `  ${password ? "Anmeldeseite: Name frei wählbar + gemeinsames Passwort (im Netz nur über HTTPS betreiben!)" : "Kein Login (nur lokal)"}\n` +
         "  Daten nur im Arbeitsspeicher, Strg+C beendet\n",
     );
   });

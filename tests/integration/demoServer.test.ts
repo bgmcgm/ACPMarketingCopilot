@@ -147,11 +147,11 @@ describe("Demo-Server mit Passwortschutz (Betrieb für mehrere Personen)", () =>
     return { status: res.status, text: await res.text(), headers: res.headers };
   };
 
-  it("verlangt Anmeldung für alles – Oberfläche, API und Health", async () => {
+  it("verlangt Anmeldung für alles – ohne Browser-Anmeldefenster (kein WWW-Authenticate)", async () => {
     for (const path of ["/", "/api/audits", "/api/health", "/.auth/me", "/assets/app.js"]) {
       const r = await call(path, {});
       expect(r.status, path).toBe(401);
-      expect(r.headers.get("www-authenticate")).toMatch(/^Basic/);
+      expect(r.headers.get("www-authenticate")).toBeNull();
     }
   });
 
@@ -211,5 +211,156 @@ describe("Demo-Server mit Passwortschutz (Betrieb für mehrere Personen)", () =>
     expect(sanitizeUserName("Max.Muster@Firma.DE")).toBe("max.muster@firma.de");
     expect(sanitizeUserName('a/../b"<script>')).toBe("a..bscript");
     expect(sanitizeUserName("x".repeat(100))).toHaveLength(40);
+  });
+});
+
+describe("Anmeldeseite und Sitzung (Pilotbetrieb)", () => {
+  const PASSWORD = "ein-langes-geheimes-passwort";
+  let srv: http.Server;
+  let url = "";
+  let clock = 1_000_000;
+
+  beforeAll(async () => {
+    srv = createDemoServer({
+      fetcher,
+      webRoot,
+      logger: quietLogger,
+      password: PASSWORD,
+      now: () => clock,
+    });
+    await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+    url = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+  });
+  afterAll(() => void srv.close());
+
+  const raw = (path: string, init: RequestInit = {}) =>
+    fetch(url + path, { redirect: "manual", ...init });
+  const login = (name: string, password: string) =>
+    raw("/login", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ name, password }).toString(),
+    });
+  const cookieOf = (res: Response): string =>
+    (res.headers.get("set-cookie") ?? "").split(";")[0] as string;
+
+  it("leitet Browser-Aufrufe ohne Anmeldung zur Anmeldeseite um", async () => {
+    for (const path of ["/", "/audits/abc", "/.auth/login/aad?post_login_redirect_uri=%2F"]) {
+      const r = await raw(path, { headers: { accept: "text/html,application/xhtml+xml" } });
+      expect(r.status, path).toBe(303);
+      expect(r.headers.get("location")).toBe("/login");
+    }
+    // API-Aufrufe bekommen weiter 401 (kein Redirect auf HTML)
+    expect((await raw("/api/audits", { headers: { accept: "text/html" } })).status).toBe(401);
+  });
+
+  it("zeigt die Anmeldeseite mit Formular und Schutz-Headern", async () => {
+    const r = await raw("/login");
+    expect(r.status).toBe(200);
+    const html = await r.text();
+    expect(html).toContain('name="name"');
+    expect(html).toContain('type="password"');
+    expect(r.headers.get("x-frame-options")).toBe("DENY");
+    expect(r.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("meldet mit richtigem Passwort an: Cookie ist HttpOnly + SameSite=Strict, danach Zugriff", async () => {
+    const r = await login("Anna", PASSWORD);
+    expect(r.status).toBe(303);
+    expect(r.headers.get("location")).toBe("/");
+    const setCookie = r.headers.get("set-cookie") ?? "";
+    expect(setCookie).toMatch(/HttpOnly/);
+    expect(setCookie).toMatch(/SameSite=Strict/);
+    expect(setCookie).not.toMatch(/Secure/); // reines HTTP intern
+    expect(setCookie).not.toContain(PASSWORD);
+
+    const me = await raw("/.auth/me", { headers: { cookie: cookieOf(r) } });
+    expect(me.status).toBe(200);
+    expect(
+      ((await me.json()) as { clientPrincipal: { userDetails: string } }).clientPrincipal
+        .userDetails,
+    ).toBe("anna");
+    const page = await raw("/", { headers: { cookie: cookieOf(r), accept: "text/html" } });
+    expect(await page.text()).toContain("SPA");
+    // Bereits angemeldet: Anmeldeseite leitet zur Startseite
+    expect(
+      (await raw("/login", { headers: { cookie: cookieOf(r) } })).headers.get("location"),
+    ).toBe("/");
+  });
+
+  it("setzt Secure, wenn ein HTTPS-Proxy davor sitzt", async () => {
+    const r = await raw("/login", {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        "x-forwarded-proto": "https",
+      },
+      body: new URLSearchParams({ name: "anna", password: PASSWORD }).toString(),
+    });
+    expect(r.headers.get("set-cookie")).toMatch(/Secure/);
+  });
+
+  it("weist falsche Zugangsdaten ab, ohne Cookie und ohne Passwort-Hinweis", async () => {
+    for (const [n, p] of [
+      ["anna", "falsch"],
+      ["", PASSWORD],
+      ["anna", ""],
+    ] as const) {
+      const r = await login(n, p);
+      expect(r.status).toBe(401);
+      expect(r.headers.get("set-cookie")).toBeNull();
+      expect(await r.text()).toContain("Name oder Passwort falsch.");
+    }
+  });
+
+  it("lehnt manipulierte und fremd signierte Cookies ab", async () => {
+    const good = cookieOf(await login("anna", PASSWORD));
+    const [name, token] = good.split("=") as [string, string];
+    const [payload, sig] = token.split(".") as [string, string];
+    const evilPayload = Buffer.from(JSON.stringify({ u: "bernd", exp: clock + 1e9 })).toString(
+      "base64url",
+    );
+    for (const forged of [
+      `${evilPayload}.${sig}`,
+      `${payload}.${sig.slice(0, -2)}xx`,
+      "abc",
+      `${payload}`,
+      "",
+    ]) {
+      const r = await raw("/.auth/me", { headers: { cookie: `${name}=${forged}` } });
+      expect(r.status, forged).toBe(401);
+    }
+  });
+
+  it("lässt Sitzungen nach 12 Stunden ablaufen", async () => {
+    const cookie = cookieOf(await login("anna", PASSWORD));
+    expect((await raw("/.auth/me", { headers: { cookie } })).status).toBe(200);
+    clock += 12 * 60 * 60 * 1000 + 1;
+    expect((await raw("/.auth/me", { headers: { cookie } })).status).toBe(401);
+  });
+
+  it("meldet ab und löscht das Cookie", async () => {
+    const r = await raw("/.auth/logout");
+    expect(r.status).toBe(303);
+    expect(r.headers.get("location")).toBe("/login");
+    expect(r.headers.get("set-cookie")).toMatch(/Max-Age=0/);
+  });
+
+  it("bremst Passwort-Raten: nach 10 Fehlversuchen 429, nach Ablauf des Fensters wieder möglich", async () => {
+    clock += 10 * 60_000; // sauberer Start des Zeitfensters
+    for (let i = 0; i < 10; i++) expect((await login("x", "falsch")).status).toBe(401);
+    expect((await login("x", "falsch")).status).toBe(429);
+    expect((await login("anna", PASSWORD)).status).toBe(429); // auch das richtige Passwort wird während der Sperre abgewiesen
+    clock += 5 * 60_000 + 1;
+    expect((await login("anna", PASSWORD)).status).toBe(303);
+  });
+
+  it("HTML in Namen wird nirgends ausgeführt (Name wird bereinigt)", async () => {
+    const r = await login("<img src=x onerror=alert(1)>", PASSWORD);
+    expect(r.status).toBe(303);
+    const me = await raw("/.auth/me", { headers: { cookie: cookieOf(r) } });
+    const name = ((await me.json()) as { clientPrincipal: { userDetails: string } }).clientPrincipal
+      .userDetails;
+    expect(name).not.toMatch(/[<>"' =]/);
   });
 });

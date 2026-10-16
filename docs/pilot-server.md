@@ -11,7 +11,7 @@ Für einen kleinen, internen Test mit mehreren Personen, bevor es eine Azure-Umg
 | Anmeldung ist Pflicht (ohne Passwort startet der Server im Netz gar nicht)                       | Daten nur im Arbeitsspeicher: Neustart = alles weg, nur eine Instanz                  |
 | Schutz vor Abrufen interner Adressen (SSRF) wie im Produktivsystem                               | Keine Verschlüsselung durch uns: **HTTPS muss ein Reverse-Proxy der IT liefern**      |
 
-Das Passwort wird bei HTTP im Klartext übertragen. Betreibe den Server deshalb nur in einem internen Netz und idealerweise hinter HTTPS. Nicht ins Internet stellen. Gib keine vertraulichen oder personenbezogenen Seiten in Audits ein; die Tests mit echten Daten gehören in die Azure-Umgebung mit Entra-Login.
+Das Passwort und das Sitzungs-Cookie werden bei HTTP im Klartext übertragen. Betreibe den Server deshalb nur in einem internen Netz und idealerweise hinter HTTPS. Nicht ins Internet stellen. Gib keine vertraulichen oder personenbezogenen Seiten in Audits ein; die Tests mit echten Daten gehören in die Azure-Umgebung mit Entra-Login.
 
 ## Linux-Server ohne Administratorrechte
 
@@ -65,6 +65,12 @@ Dauerbetrieb und Firewall-Freigabe richtet die IT ein (Aufgabenplanung oder Dien
 cd ~/ACPMarketingCopilot && git pull && npm ci && npm run build
 # Server beenden (Prozess finden mit: ps -u $USER | grep node) und wie oben neu starten
 ```
+
+## So melden sich Teilnehmende an
+
+1. Adresse im Browser öffnen, zum Beispiel `http://<server>:7071`.
+2. Auf der Anmeldeseite einen **Namen** (frei wählbar, zum Beispiel der Vorname) und das **gemeinsame Passwort** eintippen.
+3. Oben rechts „Abmelden“ beendet die Sitzung. Skripte können alternativ HTTP Basic nutzen (`curl -u name:passwort …`).
 
 ## Teilnehmende einweisen
 
