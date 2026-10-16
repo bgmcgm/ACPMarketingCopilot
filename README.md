@@ -43,6 +43,33 @@ npm run typecheck # TypeScript (strict)
 npm run lint
 ```
 
+## Lokal entwickeln (ohne Azure)
+
+Voraussetzung: Node 22, Git. Dann:
+
+```
+npm install
+npm run dev
+```
+
+- Oberfläche: `http://localhost:5173` (lädt bei Änderungen im Frontend sofort neu)
+- API/Backend: `http://localhost:7071` (startet bei Änderungen am Backend automatisch neu)
+- Daten liegen nur im Arbeitsspeicher; kein Login (fester Demo-Benutzer).
+- KI-Bewertung (optional): `.env.example` nach `.env.local` kopieren und `AI_MODEL` sowie `ANTHROPIC_API_KEY` eintragen. Ohne diese Werte ist die KI ausgeschaltet.
+
+Vor jedem Commit: `npm test && npm run lint && npm run typecheck`.
+
+Typische Änderungen:
+
+| Ich will …                           | Datei                                                                    |
+| ------------------------------------ | ------------------------------------------------------------------------ |
+| eine Prüfregel ändern oder ergänzen  | `apps/functions/src/rules/<kategorie>.ts` (+ Test in `tests/rules/`)     |
+| Gewichtung des Scores ändern         | `apps/functions/src/scoring/scoring.ts` (`defaultScoringConfig`)         |
+| Texte/Aussehen der Oberfläche ändern | `apps/web/src/pages/` und `apps/web/src/components/`                     |
+| den KI-Prompt anpassen               | `apps/functions/src/ai/prompt.ts` (Version `PROMPT_VERSION` mit erhöhen) |
+
+Später in Azure: Der Code bleibt unverändert, es kommt nur die Infrastruktur dazu (`docs/runbook.md`).
+
 **Demo-Modus (ohne Azure, ohne Zugangsdaten):** `npm install && npm run demo`, dann `http://localhost:7071` öffnen. Es läuft die echte Anwendungslogik (Abruf mit SSRF-Schutz, Analyse, Regeln, Score, API, Worker, Oberfläche); nur Cosmos DB, Queue und Login sind durch Arbeitsspeicher bzw. einen festen Demo-Benutzer ersetzt. Daten sind nach Neustart weg. Die KI-Bewertung läuft nur, wenn `AI_MODEL` und `ANTHROPIC_API_KEY` in der Shell gesetzt sind, sonst ist sie ausgeschaltet. Der Demo-Code liegt in `apps/functions/src/dev/` und ist nicht im Deploy-Paket.
 
 Wo lese ich was?
