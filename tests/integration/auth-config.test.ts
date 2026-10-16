@@ -52,7 +52,8 @@ describe("loadConfig", () => {
     expect(c.auditTtlSeconds).toBe(90 * 86400);
     expect(c.quotas).toEqual({ maxActive: 3, maxPerDay: 50 });
     expect(c.allowedRole).toBeNull();
-    expect(c.scoring.categoryWeights.seo).toBe(25);
+    expect(c.scoring.categoryWeights.seo).toBe(20);
+    expect(c.scoring.categoryWeights.geo).toBe(15);
   });
   it("configures the AI provider and keeps the key out of defaults", () => {
     const c = loadConfig(base);

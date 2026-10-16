@@ -9,13 +9,16 @@ import { isBlockedIp } from "./ipGuard.js";
 import { UrlValidationError, validateUrl, type UrlPolicy } from "./urlValidator.js";
 
 export class FetchError extends Error {
+  /** Nur gesetzt, wenn der Zielserver mit einem HTTP-Fehlerstatus geantwortet hat. */
+  httpStatus?: number;
   constructor(
     readonly code: AuditErrorCode,
     message: string,
-    options?: { cause?: unknown },
+    options?: { cause?: unknown; httpStatus?: number },
   ) {
-    super(message, options);
+    super(message, options?.cause !== undefined ? { cause: options.cause } : undefined);
     this.name = "FetchError";
+    if (options?.httpStatus !== undefined) this.httpStatus = options.httpStatus;
   }
 }
 
@@ -46,8 +49,15 @@ export interface FetchResult {
   fetchedAt: string;
 }
 
+export interface FetchOptions {
+  /** Erlaubte MIME-Typen (Standard: HTML). */
+  allowedContentTypes?: readonly string[];
+  /** Obergrenze der Antwortgröße (Standard: Konfiguration des Fetchers). */
+  maxBytes?: number;
+}
+
 export interface PageFetcher {
-  fetch(url: string): Promise<FetchResult>;
+  fetch(url: string, options?: FetchOptions): Promise<FetchResult>;
 }
 
 const ALLOWED_CONTENT_TYPES = ["text/html", "application/xhtml+xml"];
@@ -66,12 +76,12 @@ export class SafeFetcher implements PageFetcher {
     this.isIpBlocked = opts.isIpBlocked ?? ((address) => isBlockedIp(address));
   }
 
-  async fetch(rawUrl: string): Promise<FetchResult> {
+  async fetch(rawUrl: string, options: FetchOptions = {}): Promise<FetchResult> {
     const started = Date.now();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.opts.timeoutMs);
     try {
-      return await this.run(rawUrl, controller.signal, started);
+      return await this.run(rawUrl, controller.signal, started, options);
     } catch (err) {
       if (err instanceof FetchError) throw err;
       if (controller.signal.aborted)
@@ -82,7 +92,12 @@ export class SafeFetcher implements PageFetcher {
     }
   }
 
-  private async run(rawUrl: string, signal: AbortSignal, started: number): Promise<FetchResult> {
+  private async run(
+    rawUrl: string,
+    signal: AbortSignal,
+    started: number,
+    options: FetchOptions,
+  ): Promise<FetchResult> {
     const chain: string[] = [];
     let current = this.validate(rawUrl);
 
@@ -108,17 +123,24 @@ export class SafeFetcher implements PageFetcher {
 
       if (status < 200 || status >= 300) {
         res.resume();
-        throw new FetchError("FETCH_FAILED", `Zielserver antwortete mit HTTP ${status}.`);
+        throw new FetchError("FETCH_FAILED", `Zielserver antwortete mit HTTP ${status}.`, {
+          httpStatus: status,
+        });
       }
 
       const contentType = String(res.headers["content-type"] ?? "");
       const mime = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
-      if (!ALLOWED_CONTENT_TYPES.includes(mime)) {
+      if (!(options.allowedContentTypes ?? ALLOWED_CONTENT_TYPES).includes(mime)) {
         res.resume();
-        throw new FetchError("UNSUPPORTED_CONTENT_TYPE", "Nur HTML-Seiten werden unterstützt.");
+        throw new FetchError(
+          "UNSUPPORTED_CONTENT_TYPE",
+          options.allowedContentTypes
+            ? "Unerwarteter Dateityp."
+            : "Nur HTML-Seiten werden unterstützt.",
+        );
       }
 
-      const { buffer } = await this.readBody(res, signal);
+      const { buffer } = await this.readBody(res, signal, options.maxBytes ?? this.opts.maxBytes);
       return {
         finalUrl: current.toString(),
         redirectChain: chain,
@@ -189,7 +211,11 @@ export class SafeFetcher implements PageFetcher {
     });
   }
 
-  private readBody(res: http.IncomingMessage, signal: AbortSignal): Promise<{ buffer: Buffer }> {
+  private readBody(
+    res: http.IncomingMessage,
+    signal: AbortSignal,
+    maxBytes: number,
+  ): Promise<{ buffer: Buffer }> {
     const encoding = String(res.headers["content-encoding"] ?? "identity").toLowerCase();
     let stream: Readable = res;
     if (encoding === "gzip" || encoding === "x-gzip") stream = res.pipe(createGunzip());
@@ -215,7 +241,7 @@ export class SafeFetcher implements PageFetcher {
       );
       stream.on("data", (chunk: Buffer) => {
         size += chunk.length; // nach Dekompression gezählt
-        if (size > this.opts.maxBytes) {
+        if (size > maxBytes) {
           fail(new FetchError("RESPONSE_TOO_LARGE", "Die Antwort ist zu groß."));
           return;
         }

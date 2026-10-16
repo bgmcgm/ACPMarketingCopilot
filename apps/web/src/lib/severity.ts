@@ -43,11 +43,13 @@ export const CATEGORY_LABEL: Record<AuditCategory, string> = {
   consent: "Consent",
   content: "Content",
   conversion: "Conversion",
+  geo: "GEO / KI-Sichtbarkeit",
 };
 
 /** Consent-Ergebnisse sind Indikatoren aus statischem HTML, kein Rechtsurteil. */
 export const CATEGORY_NOTE: Partial<Record<AuditCategory, string>> = {
   consent: "Indikatoren aus dem initialen HTML – keine rechtliche Bewertung.",
+  geo: "Technische Voraussetzungen für KI-Antworten – keine Messung, ob die Seite tatsächlich zitiert wird.",
 };
 
 export const CATEGORY_ORDER: AuditCategory[] = [
@@ -56,6 +58,7 @@ export const CATEGORY_ORDER: AuditCategory[] = [
   "consent",
   "content",
   "conversion",
+  "geo",
 ];
 
 export type ScoreBand = "good" | "fair" | "poor";

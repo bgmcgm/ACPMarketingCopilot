@@ -10,7 +10,7 @@ export const AiOutputSchema = z.object({
   executiveSummary: z.string(),
   marketingFindings: z.array(
     z.object({
-      category: z.enum(["seo", "tracking", "consent", "content", "conversion", "messaging"]),
+      category: z.enum(["seo", "tracking", "consent", "content", "conversion", "geo", "messaging"]),
       severity: z.enum(["high", "medium", "low"]),
       finding: z.string(),
       recommendation: z.string(),

@@ -37,6 +37,46 @@ export interface ImageInfo {
   alt: string | null;
 }
 
+/** Strukturierte Daten (JSON-LD), reduziert auf die für GEO relevanten Merkmale. */
+export interface JsonLdSummary {
+  types: string[];
+  hasOrganization: boolean;
+  /** Anzahl sameAs-Verweise der Organisation/Person (Profile, Wikipedia, Wikidata …). */
+  sameAsCount: number;
+  hasAuthor: boolean;
+  hasDatePublished: boolean;
+  hasDateModified: boolean;
+  hasFaq: boolean;
+}
+
+/** Inhaltliche Struktursignale, die Antwortsysteme beim Extrahieren und Zitieren unterstützen. */
+export interface ContentSignals {
+  questionHeadings: number;
+  /** Listen (ul/ol) mit mindestens 3 Einträgen. */
+  lists: number;
+  tables: number;
+  detailsElements: number;
+  /** Elemente mit data-nosnippet. */
+  nosnippetElements: number;
+  hasAuthorMeta: boolean;
+  timeElements: number;
+  hasPublishedMeta: boolean;
+  hasModifiedMeta: boolean;
+}
+
+/** Ergebnis des Abrufs einer Site-Datei (robots.txt, llms.txt). */
+export interface SiteFile {
+  /** missing = existiert nicht (404/keine Textdatei); unavailable = Abruf nicht möglich (Fehler, gesperrt). */
+  status: "found" | "missing" | "unavailable";
+  /** Gekappter Inhalt, nur im Speicher für die Auswertung – wird nicht gespeichert. */
+  content?: string;
+}
+
+export interface SiteSignals {
+  robotsTxt: SiteFile;
+  llmsTxt: SiteFile;
+}
+
 export interface PageSnapshot {
   url: string;
   finalUrl: string;
@@ -55,6 +95,10 @@ export interface PageSnapshot {
   scripts: ScriptInfo[];
   forms: FormInfo[];
   jsonLdTypes: string[];
+  jsonLd: JsonLdSummary;
+  contentSignals: ContentSignals;
+  /** Fehlt, wenn die Site-Dateien nicht geprüft wurden. */
+  site?: SiteSignals;
   buttons: { text: string }[];
   visibleText: string;
   wordCount: number;

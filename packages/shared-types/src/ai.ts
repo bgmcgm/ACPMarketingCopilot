@@ -6,7 +6,15 @@ export const AiAssessmentSchema = z.object({
   marketingFindings: z
     .array(
       z.object({
-        category: z.enum(["seo", "tracking", "consent", "content", "conversion", "messaging"]),
+        category: z.enum([
+          "seo",
+          "tracking",
+          "consent",
+          "content",
+          "conversion",
+          "geo",
+          "messaging",
+        ]),
         severity: z.enum(["high", "medium", "low"]),
         finding: z.string().min(1).max(1000),
         recommendation: z.string().min(1).max(1000),

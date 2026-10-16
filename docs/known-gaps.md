@@ -34,3 +34,12 @@ Siehe `docs/runbook.md` Abschnitt 6. Besonders kritisch: Flex Consumption als SW
 
 - `npm audit --omit=dev`: 0 bekannte Schwachstellen (Stand Inkrement 11).
 - `npm audit` inklusive Dev-Abhängigkeiten meldet Treffer (u. a. Test-Toolchain: vitest/vite/esbuild, azurite, tinypool). Betrifft nur Entwicklung/CI, nicht das ausgelieferte Paket; Upgrade der Toolchain steht aus (Vitest-Major-Update).
+
+## GEO / KI-Sichtbarkeit
+
+- Gemessen werden technische Voraussetzungen im initialen HTML sowie robots.txt/llms.txt – **nicht**, ob eine Marke oder Seite in ChatGPT, Perplexity, Claude oder Google-KI-Antworten tatsächlich genannt wird.
+- Die Crawler-Liste (`rules/geo.ts`, Stand Oktober 2026) muss regelmäßig gegen die Herstellerdokumentation geprüft werden; Namen und Zuständigkeiten ändern sich.
+- llms.txt ist eine junge Konvention ohne bestätigte Wirkung bei großen Anbietern und deshalb nur ein Hinweis.
+- Strukturierte Daten werden nur als JSON-LD erkannt (kein Microdata/RDFa).
+- Die Aussage "viele KI-Crawler führen kein JavaScript aus" ist eine verbreitete Beobachtung, kein von uns geprüftes Verhalten; die Schwellenwerte der Regel (Wörter/Skripte) sind Heuristiken.
+- Ältere gespeicherte Audits enthalten kein GEO-Ergebnis; ihr Gesamtscore wurde mit den alten Gewichten (SEO 25 …) berechnet.

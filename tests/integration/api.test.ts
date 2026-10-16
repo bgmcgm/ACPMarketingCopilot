@@ -19,8 +19,8 @@ describe("POST /audits", () => {
     expect(res.headers?.["location"]).toBe(`/api/audits/${body.id}`);
     expect(h.queue.messages).toEqual([{ schemaVersion: 1, auditId: body.id, ownerId: "user-1" }]);
     const doc = await h.repo.get("user-1", body.id);
-    expect(doc?.input.modules).toHaveLength(5); // Default: alle Module
-    expect(doc?.input.rulesetVersion).toBe("1.0.0");
+    expect(doc?.input.modules).toHaveLength(6); // Default: alle Module
+    expect(doc?.input.rulesetVersion).toBe("1.1.0");
     expect(doc?.ttl).toBe(90 * 86400);
   });
 
@@ -256,7 +256,7 @@ describe("GET /rulesets and /health", () => {
       }
     ).rulesets;
     expect(rs[0]!.rules.length).toBeGreaterThan(20);
-    expect(rs[0]!.scoring.categoryWeights.seo).toBe(25);
+    expect(rs[0]!.scoring.categoryWeights.seo).toBe(20);
   });
   it("health is anonymous for liveness, authenticated for deep checks", async () => {
     const h = makeHarness();

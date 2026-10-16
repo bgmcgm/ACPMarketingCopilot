@@ -48,6 +48,11 @@ beforeAll(async () => {
       return void res.writeHead(302, { location: `http://internal.test:${port}/x` }).end();
     if (path === "/to-file")
       return void res.writeHead(302, { location: "file:///etc/passwd" }).end();
+    if (path === "/robots.txt") {
+      return void res
+        .writeHead(200, { "content-type": "text/plain; charset=utf-8" })
+        .end("User-agent: *\nDisallow: /privat\nSitemap: https://ok.test/sitemap.xml");
+    }
     res.writeHead(500).end();
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
@@ -179,6 +184,45 @@ describe("SafeFetcher – limits", () => {
   });
   it("honors the domain allowlist", async () => {
     expect(await codeOf(make({ domainAllowlist: ["example.com"] }).fetch(url("/ok")))).toBe(
+      "TARGET_BLOCKED",
+    );
+  });
+});
+
+describe("SafeFetcher – Optionen für Textdateien (robots.txt, llms.txt)", () => {
+  const plain = { allowedContentTypes: ["text/plain"] };
+
+  it("ruft Textdateien ab, wenn der Typ ausdrücklich erlaubt ist", async () => {
+    const r = await make().fetch(url("/robots.txt"), plain);
+    expect(r.html).toContain("User-agent: *");
+    expect(r.contentType).toMatch(/^text\/plain/);
+  });
+
+  it("Standard bleibt HTML: Textdateien werden ohne Freigabe abgelehnt, HTML bei Textfreigabe ebenso", async () => {
+    expect(await codeOf(make().fetch(url("/robots.txt")))).toBe("UNSUPPORTED_CONTENT_TYPE");
+    expect(await codeOf(make().fetch(url("/ok"), plain))).toBe("UNSUPPORTED_CONTENT_TYPE");
+  });
+
+  it("meldet HTTP-Fehlerstatus am Fehlerobjekt (404 = Datei fehlt)", async () => {
+    const err = (await make()
+      .fetch(url("/404"), plain)
+      .catch((e: unknown) => e)) as FetchError;
+    expect(err).toBeInstanceOf(FetchError);
+    expect(err.code).toBe("FETCH_FAILED");
+    expect(err.httpStatus).toBe(404);
+  });
+
+  it("kennt eine eigene Größenobergrenze pro Abruf", async () => {
+    // /big liefert HTML; erst Größe prüfen, daher auch hier der HTML-Typ erlaubt
+    const opts = { allowedContentTypes: ["text/html"], maxBytes: 1000 };
+    expect(await codeOf(make({ maxBytes: 1_000_000 }).fetch(url("/big"), opts))).toBe(
+      "RESPONSE_TOO_LARGE",
+    );
+  });
+
+  it("die SSRF-Prüfungen gelten unverändert für Textdateien", async () => {
+    expect(await codeOf(make().fetch("http://127.0.0.1/robots.txt", plain))).toBe("TARGET_BLOCKED");
+    expect(await codeOf(make().fetch(url("/robots.txt", "internal.test"), plain))).toBe(
       "TARGET_BLOCKED",
     );
   });

@@ -104,7 +104,7 @@ describe("AuditPipeline – success", () => {
     expect(doc.findings!.length).toBeGreaterThan(20);
     expect(doc.findings!.every((f) => f.source === "measured")).toBe(true);
     expect(doc.score!.overall).toBeGreaterThan(70);
-    expect(doc.score!.configVersion).toBe("1.0.0");
+    expect(doc.score!.configVersion).toBe("1.1.0");
     expect(doc.page).toMatchObject({
       title: "Marketing Automation Software | Beispiel GmbH",
       lang: "de",

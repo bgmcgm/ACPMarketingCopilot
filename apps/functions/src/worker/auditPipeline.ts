@@ -1,4 +1,11 @@
-import type { AuditCategory, AuditErrorCode, AuditQueueMessage } from "@mcopilot/shared-types";
+import type {
+  AuditCategory,
+  AuditErrorCode,
+  AuditQueueMessage,
+  PageSnapshot,
+  SiteFile,
+  SiteSignals,
+} from "@mcopilot/shared-types";
 import { analyzeHtml } from "../analyzer/htmlAnalyzer.js";
 import { buildAiInput, type AiAssessmentInput, type AiProvider } from "../ai/provider.js";
 import { PROMPT_VERSION } from "../ai/prompt.js";
@@ -24,6 +31,7 @@ export interface AuditPipelineDeps {
   now?: () => Date;
 }
 
+const SITE_FILE_MAX_CHARS = 200_000;
 const TERMINAL = new Set(["completed", "failed"]);
 
 /**
@@ -94,14 +102,19 @@ export class AuditPipeline {
       record: Pick<AuditDocument, "page" | "findings" | "score">;
       aiInput: AiAssessmentInput;
     };
+    const modules: AuditCategory[] = running.input.modules;
+    // robots.txt/llms.txt nur abrufen, wenn das GEO-Modul gewählt ist (zwei zusätzliche, kleine Abrufe).
+    const site = modules.includes("geo") ? await this.loadSiteSignals(fetched.finalUrl) : undefined;
     try {
-      const snapshot = analyzeHtml({
-        html: fetched.html,
-        url: running.input.normalizedUrl,
-        finalUrl: fetched.finalUrl,
-        statusCode: fetched.statusCode,
-      });
-      const modules: AuditCategory[] = running.input.modules;
+      const snapshot: PageSnapshot = {
+        ...analyzeHtml({
+          html: fetched.html,
+          url: running.input.normalizedUrl,
+          finalUrl: fetched.finalUrl,
+          statusCode: fetched.statusCode,
+        }),
+        ...(site ? { site } : {}),
+      };
       const findings = evaluateRuleset(snapshot, this.d.ruleset, modules);
       analysis = {
         record: {
@@ -168,6 +181,42 @@ export class AuditPipeline {
         error: { code: "PROVIDER_ERROR", message: "Die KI-Bewertung ist derzeit nicht verfügbar." },
       };
     }
+  }
+
+  /**
+   * Holt robots.txt und llms.txt vom Ursprung der (final aufgelösten) Seite. Wirft nie:
+   * fehlende Dateien (404/410, keine Textdatei) gelten als "missing", alles andere als "unavailable".
+   */
+  private async loadSiteSignals(finalUrl: string): Promise<SiteSignals> {
+    const origin = new URL(finalUrl).origin;
+    const load = async (path: string, types: string[], maxBytes: number): Promise<SiteFile> => {
+      try {
+        const res = await this.d.fetcher.fetch(`${origin}${path}`, {
+          allowedContentTypes: types,
+          maxBytes,
+        });
+        return { status: "found", content: res.html.slice(0, SITE_FILE_MAX_CHARS) };
+      } catch (err) {
+        if (
+          err instanceof FetchError &&
+          (err.httpStatus === 404 ||
+            err.httpStatus === 410 ||
+            err.code === "UNSUPPORTED_CONTENT_TYPE")
+        ) {
+          return { status: "missing" };
+        }
+        this.d.logger.warn("Site-Datei nicht abrufbar", {
+          path,
+          code: err instanceof FetchError ? err.code : "UNKNOWN",
+        });
+        return { status: "unavailable" };
+      }
+    };
+    const [robotsTxt, llmsTxt] = await Promise.all([
+      load("/robots.txt", ["text/plain"], 512 * 1024),
+      load("/llms.txt", ["text/plain", "text/markdown"], 256 * 1024),
+    ]);
+    return { robotsTxt, llmsTxt };
   }
 
   /** Für die Poison Queue: ein nie abgeschlossenes Audit darf nicht ewig "queued/running" bleiben. */

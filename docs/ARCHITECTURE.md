@@ -159,7 +159,7 @@ interface AuditDocument {
   input: {
     url: string; // vom Benutzer eingegeben
     normalizedUrl: string;
-    modules: AuditCategory[]; // subset von seo|tracking|consent|content|conversion
+    modules: AuditCategory[]; // subset von seo|tracking|consent|content|conversion|geo
     rulesetId: string;
     rulesetVersion: string;
   };
@@ -191,7 +191,7 @@ interface AuditDocument {
   error?: { code: AuditErrorCode; message: string };
 }
 
-type AuditCategory = "seo" | "tracking" | "consent" | "content" | "conversion";
+type AuditCategory = "seo" | "tracking" | "consent" | "content" | "conversion" | "geo";
 
 interface TechnicalFinding {
   ruleId: string; // z. B. "SEO_META_DESCRIPTION"
@@ -225,7 +225,7 @@ interface AiAssessmentRecord {
 interface AiAssessment {
   executiveSummary: string;
   marketingFindings: {
-    category: "seo" | "tracking" | "consent" | "content" | "conversion" | "messaging";
+    category: "seo" | "tracking" | "consent" | "content" | "conversion" | "geo" | "messaging";
     severity: "high" | "medium" | "low";
     finding: string;
     recommendation: string;
@@ -255,7 +255,7 @@ Ruleset (`rulesets/default.v1.json`) und Scoring-Konfiguration (`scoring/default
 - Regelgewicht nach Severity: `critical=10, high=6, medium=3, low=1, info=0` (konfigurierbar).
 - Je Regel Erfüllungsgrad: `passed=1`, `warning=0.5`, `failed=0`, `not_applicable` → ausgeschlossen.
 - Kategorie-Score = `100 × Σ(Gewicht × Erfüllungsgrad) / Σ(Gewicht)` über anwendbare Regeln; keine anwendbaren Regeln → `null`.
-- Gesamt-Score = gewichteter Mittelwert der Kategorie-Scores, Gewichte auf **gewählte** Module renormalisiert (Start: SEO 25, Tracking 25, Consent 20, Content 15, Conversion 15).
+- Gesamt-Score = gewichteter Mittelwert der Kategorie-Scores, Gewichte auf **gewählte** Module renormalisiert (Start: SEO 20, Tracking 20, Consent 15, Content 15, Conversion 15, GEO 15 – konfigurierbar).
 - **Consent** wird im UI als "Indikatoren" gekennzeichnet, weil nur statische Analyse möglich ist (kein Rechtsurteil).
 
 ---
@@ -424,3 +424,11 @@ Lokale Entwicklung: Azurite (Queue), Cosmos-DB-Emulator, SWA CLI (`swa start` mi
 3. Identitätsbasierter `AzureWebJobsStorage` auf dem gewählten Plan.
 4. Aktuelle Node-Runtime-Version für Azure Functions v4.
 5. Aktuelle Claude-Modell-ID und Tool-Use-/Structured-Output-Parameter.
+
+## Nachtrag: Modul GEO / KI-Sichtbarkeit (Oktober 2026)
+
+Sechste Kategorie `geo` mit zehn deterministischen Regeln (`rules/geo.ts`): Zugriff der KI-Such-/Antwort-Crawler laut robots.txt, Trainings-Crawler-Richtlinie (informativ), robots.txt, llms.txt (informativ), Snippet-Freigabe, strukturierte Daten (JSON-LD), Organisations-/Marken-Signale (sameAs), Autor und Datum, antwortfähige Struktur (Fragen-Überschriften, Listen, Tabellen, FAQ) und Inhalt im initialen HTML (Server-Rendering).
+
+- **Zusätzliche Abrufe:** Nur bei gewähltem GEO-Modul holt die Pipeline `/robots.txt` und `/llms.txt` vom Ursprung der final aufgelösten URL, über denselben SSRF-geschützten Fetcher (nur `text/plain`/`text/markdown`, kleine Größenobergrenze). 404/falscher Typ = "fehlt", sonstige Fehler = "nicht abrufbar" (nie ein Audit-Fehler).
+- **Gewichte:** Standard SEO 20, Tracking 20, Consent 15, Content 15, Conversion 15, GEO 15 (Summe 100; Konfiguration `SCORING_CONFIG_JSON`, GEO optional, ohne Angabe 0).
+- **Abgrenzung:** Das Modul misst technische Voraussetzungen, **nicht**, ob die Seite in KI-Antworten tatsächlich zitiert wird (dafür wären kostenpflichtige, nicht-deterministische Abfragen bei KI-Diensten nötig – nicht Teil des MVP).

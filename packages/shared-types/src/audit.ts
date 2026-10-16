@@ -1,6 +1,13 @@
 import { z } from "zod";
 
-export const AUDIT_CATEGORIES = ["seo", "tracking", "consent", "content", "conversion"] as const;
+export const AUDIT_CATEGORIES = [
+  "seo",
+  "tracking",
+  "consent",
+  "content",
+  "conversion",
+  "geo",
+] as const;
 export const AuditCategorySchema = z.enum(AUDIT_CATEGORIES);
 export type AuditCategory = z.infer<typeof AuditCategorySchema>;
 

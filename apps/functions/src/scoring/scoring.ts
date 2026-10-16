@@ -15,6 +15,8 @@ export const ScoringConfigSchema = z.object({
     consent: z.number().min(0),
     content: z.number().min(0),
     conversion: z.number().min(0),
+    // Optional für ältere Override-Konfigurationen: ohne Angabe fließt GEO nicht in den Gesamtscore ein.
+    geo: z.number().min(0).default(0),
   }),
   severityWeights: z.object({
     critical: z.number().min(0),
@@ -32,8 +34,8 @@ export const ScoringConfigSchema = z.object({
 export type ScoringConfig = z.infer<typeof ScoringConfigSchema>;
 
 export const defaultScoringConfig: ScoringConfig = {
-  version: "1.0.0",
-  categoryWeights: { seo: 25, tracking: 25, consent: 20, content: 15, conversion: 15 },
+  version: "1.1.0",
+  categoryWeights: { seo: 20, tracking: 20, consent: 15, content: 15, conversion: 15, geo: 15 },
   severityWeights: { critical: 10, high: 6, medium: 3, low: 1, info: 0 },
   statusCredit: { passed: 1, warning: 0.5, failed: 0 },
 };

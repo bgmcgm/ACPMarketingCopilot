@@ -1,8 +1,10 @@
 import * as cheerio from "cheerio";
 import type {
+  ContentSignals,
   FormInfo,
   HeadingInfo,
   ImageInfo,
+  JsonLdSummary,
   LinkInfo,
   PageSnapshot,
   ScriptInfo,
@@ -107,14 +109,53 @@ export function analyzeHtml(input: AnalyzeInput): PageSnapshot {
   });
 
   const jsonLdTypes: string[] = [];
+  const ldDocuments: unknown[] = [];
   $('script[type="application/ld+json"]').each((_, el) => {
     try {
       const parsed: unknown = JSON.parse($(el).html() ?? "");
+      ldDocuments.push(parsed);
       collectJsonLdTypes(parsed, jsonLdTypes);
     } catch {
       // ungültiges JSON-LD wird ignoriert
     }
   });
+  const jsonLd = summarizeJsonLd(ldDocuments, jsonLdTypes);
+
+  // Struktursignale im Hauptinhalt (ohne Navigation, Kopf-/Fußbereich, Seitenleisten)
+  const root = $("main").first().length
+    ? $("main").first()
+    : $("article").first().length
+      ? $("article").first()
+      : $("body");
+  const inContent = (el: Parameters<typeof $>[0]): boolean =>
+    $(el).closest("nav, header, footer, aside").length === 0;
+  const metaContent = (selector: string): boolean =>
+    orNull($(selector).first().attr("content")) !== null;
+  const contentSignals: ContentSignals = {
+    questionHeadings: headings.filter((h) => h.level >= 2 && h.level <= 4 && /\?\s*$/.test(h.text))
+      .length,
+    lists: root
+      .find("ul, ol")
+      .toArray()
+      .filter((el) => inContent(el) && $(el).children("li").length >= 3).length,
+    tables: root.find("table").toArray().filter(inContent).length,
+    detailsElements: $("details").length,
+    nosnippetElements: $("[data-nosnippet]").length,
+    hasAuthorMeta:
+      metaContent('meta[name="author" i]') ||
+      $('link[rel="author"], a[rel="author"], [itemprop="author"]').length > 0,
+    timeElements: $("time[datetime]").length,
+    hasPublishedMeta:
+      metaContent('meta[property="article:published_time"]') ||
+      metaContent('meta[name="date" i]') ||
+      metaContent('meta[name="publish-date" i]') ||
+      $('[itemprop="datePublished"]').length > 0,
+    hasModifiedMeta:
+      metaContent('meta[property="article:modified_time"]') ||
+      metaContent('meta[property="og:updated_time"]') ||
+      metaContent('meta[name="last-modified" i]') ||
+      $('[itemprop="dateModified"]').length > 0,
+  };
 
   const buttons: { text: string }[] = [];
   $(
@@ -161,6 +202,8 @@ export function analyzeHtml(input: AnalyzeInput): PageSnapshot {
     scripts,
     forms,
     jsonLdTypes,
+    jsonLd,
+    contentSignals,
     buttons,
     visibleText: visibleText.slice(0, MAX_VISIBLE_TEXT_CHARS),
     wordCount,
@@ -177,4 +220,51 @@ function collectJsonLdTypes(node: unknown, out: string[]): void {
     else if (Array.isArray(t)) out.push(...t.filter((x): x is string => typeof x === "string"));
     if (obj["@graph"]) collectJsonLdTypes(obj["@graph"], out);
   }
+}
+
+const ENTITY_TYPE = /Organization|Corporation|LocalBusiness|NGO|Store|Brand|Person/;
+
+/** Reduziert JSON-LD auf die für GEO relevanten Merkmale (Entität, sameAs, Autor, Daten, FAQ). */
+function summarizeJsonLd(documents: unknown[], types: string[]): JsonLdSummary {
+  const summary: JsonLdSummary = {
+    types: [...new Set(types)],
+    hasOrganization: false,
+    sameAsCount: 0,
+    hasAuthor: false,
+    hasDatePublished: false,
+    hasDateModified: false,
+    hasFaq: types.includes("FAQPage") || types.includes("Question"),
+  };
+  let visited = 0;
+  const walk = (node: unknown, depth: number): void => {
+    if (depth > 6 || visited > 500) return;
+    if (Array.isArray(node)) return node.forEach((n) => walk(n, depth + 1));
+    if (!node || typeof node !== "object") return;
+    visited++;
+    const obj = node as Record<string, unknown>;
+    const t = obj["@type"];
+    const typeList =
+      typeof t === "string"
+        ? [t]
+        : Array.isArray(t)
+          ? t.filter((x): x is string => typeof x === "string")
+          : [];
+    if (typeList.some((x) => ENTITY_TYPE.test(x))) {
+      summary.hasOrganization = true;
+      const sameAs = obj["sameAs"];
+      summary.sameAsCount +=
+        typeof sameAs === "string"
+          ? 1
+          : Array.isArray(sameAs)
+            ? sameAs.filter((x) => typeof x === "string").length
+            : 0;
+    }
+    if (obj["author"]) summary.hasAuthor = true;
+    if (obj["datePublished"]) summary.hasDatePublished = true;
+    if (obj["dateModified"]) summary.hasDateModified = true;
+    for (const value of Object.values(obj))
+      if (value && typeof value === "object") walk(value, depth + 1);
+  };
+  documents.forEach((d) => walk(d, 0));
+  return summary;
 }

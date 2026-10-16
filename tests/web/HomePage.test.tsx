@@ -39,7 +39,14 @@ describe("HomePage", () => {
   it("shows the start page with all modules preselected", () => {
     renderHome();
     expect(screen.getByRole("heading", { name: "Website Auditor" })).toBeTruthy();
-    for (const label of ["SEO", "Tracking", "Consent", "Content", "Conversion"]) {
+    for (const label of [
+      "SEO",
+      "Tracking",
+      "Consent",
+      "Content",
+      "Conversion",
+      "GEO / KI-Sichtbarkeit",
+    ]) {
       expect((screen.getByLabelText(label) as HTMLInputElement).checked).toBe(true);
     }
     expect(screen.getByRole("button", { name: "Analyze Website" })).toBeTruthy();
@@ -55,7 +62,7 @@ describe("HomePage", () => {
     const body = JSON.parse(fetchMock.mock.calls[0]![1].body);
     expect(body).toEqual({
       url: "https://example.com/landing",
-      modules: ["seo", "tracking", "content", "conversion"],
+      modules: ["seo", "tracking", "content", "conversion", "geo"],
     });
   });
 
@@ -64,7 +71,14 @@ describe("HomePage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Analyze Website" }));
     expect((await screen.findByRole("alert")).textContent).toBe("Bitte eine URL eingeben.");
     fireEvent.change(screen.getByLabelText("URL"), { target: { value: "example.com" } });
-    for (const label of ["SEO", "Tracking", "Consent", "Content", "Conversion"])
+    for (const label of [
+      "SEO",
+      "Tracking",
+      "Consent",
+      "Content",
+      "Conversion",
+      "GEO / KI-Sichtbarkeit",
+    ])
       fireEvent.click(screen.getByLabelText(label));
     fireEvent.click(screen.getByRole("button", { name: "Analyze Website" }));
     await waitFor(() =>
