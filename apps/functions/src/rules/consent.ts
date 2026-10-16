@@ -1,5 +1,5 @@
 import type { Rule } from "./types.js";
-import { detectCmp, detectThirdPartyTags, findGtmIds } from "./detectors.js";
+import { detectCmp, detectThirdPartyTags, findTagManagers } from "./detectors.js";
 
 const PRIVACY = /datenschutz|privacy|privatsph|data[- ]protection/i;
 const IMPRINT = /impressum|imprint|legal[- ]notice|anbieterkennzeichnung/i;
@@ -23,7 +23,7 @@ export const consentRules: Rule[] = [
           evidence: { cmps },
           message: `CMP erkannt: ${cmps.join(", ")}.`,
         };
-      const trackers = detectThirdPartyTags(p).length + findGtmIds(p).length;
+      const trackers = detectThirdPartyTags(p).length + findTagManagers(p).length;
       if (trackers === 0) {
         return {
           status: "not_applicable",

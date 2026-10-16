@@ -44,12 +44,170 @@ export function hasHubSpot(page: PageSnapshot): boolean {
   );
 }
 
+export interface AnalyticsVendor {
+  vendor: string;
+  pattern: RegExp;
+  /**
+   * Muster, das den eigentlichen Lader erkennt (für die Einwilligungsprüfung). Inline-Aufrufe wie
+   * gtag('config', …) laden selbst nichts und dürfen nicht als "ungesperrter Tracker" zählen.
+   */
+  loaderPattern?: RegExp;
+  /** Setzt typischerweise Cookies/IDs und braucht daher in der Regel eine Einwilligung. */
+  consentRelevant: boolean;
+  /** false: Dienst erhebt keine Daten mehr (z. B. Universal Analytics, seit 2023 eingestellt). */
+  active: boolean;
+}
+
+/** Web-/Produkt-Analytics-Dienste (ohne Tag Manager). Erkennung nur im initialen HTML. */
+export const ANALYTICS_VENDORS: readonly AnalyticsVendor[] = [
+  {
+    vendor: "Google Analytics 4",
+    pattern: /googletagmanager\.com\/gtag\/js\?id=G-|gtag\(\s*['"]config['"]\s*,\s*['"]G-/,
+    loaderPattern: /googletagmanager\.com\/gtag\/js\?id=G-/,
+    consentRelevant: true,
+    active: true,
+  },
+  {
+    vendor: "Google Analytics (Universal, eingestellt)",
+    pattern: /google-analytics\.com\/(analytics|ga)\.js|UA-\d{4,}-\d+/,
+    loaderPattern: /google-analytics\.com\/(analytics|ga)\.js/,
+    consentRelevant: true,
+    active: false,
+  },
+  {
+    vendor: "Matomo",
+    pattern: /matomo\.(js|php)|piwik\.(js|php)|_paq\.push/,
+    consentRelevant: true,
+    active: true,
+  },
+  { vendor: "Piwik PRO", pattern: /piwik\.pro|ppms\.(js|eu)/, consentRelevant: true, active: true },
+  {
+    vendor: "Adobe Analytics",
+    pattern: /assets\.adobedtm\.com|omtrdc\.net|AppMeasurement\.js|s_code\.js/,
+    consentRelevant: true,
+    active: true,
+  },
+  {
+    vendor: "etracker",
+    pattern: /etracker\.(com|de)|_etrackerOnReady|et_pagename/,
+    consentRelevant: true,
+    active: true,
+  },
+  {
+    vendor: "econda",
+    pattern: /econda-monitor|emos3\.js|econda\.de/,
+    consentRelevant: true,
+    active: true,
+  },
+  {
+    vendor: "Mixpanel",
+    pattern: /cdn\.mxpnl\.com|mixpanel\.com\/(libs|track)|mixpanel\.init/,
+    consentRelevant: true,
+    active: true,
+  },
+  {
+    vendor: "Amplitude",
+    pattern: /cdn\.amplitude\.com|amplitude\.(getInstance|init)/,
+    consentRelevant: true,
+    active: true,
+  },
+  {
+    vendor: "Segment",
+    pattern: /cdn\.segment\.com\/analytics\.js|analytics\.load\(/,
+    consentRelevant: true,
+    active: true,
+  },
+  {
+    vendor: "Heap",
+    pattern: /heap-analytics|heapanalytics\.com|cdn\.heapanalytics/,
+    consentRelevant: true,
+    active: true,
+  },
+  {
+    vendor: "PostHog",
+    pattern: /posthog\.com\/static\/array|posthog\.init|app\.posthog\.com|i\.posthog\.com/,
+    consentRelevant: true,
+    active: true,
+  },
+  {
+    vendor: "Yandex Metrica",
+    pattern: /mc\.yandex\.(ru|com)\/metrika/,
+    consentRelevant: true,
+    active: true,
+  },
+  {
+    vendor: "HubSpot Tracking",
+    pattern: /js\.hs-scripts\.com|js\.hs-analytics\.net/,
+    consentRelevant: true,
+    active: true,
+  },
+  // Cookielose bzw. datensparsame Dienste: i. d. R. ohne Einwilligungsbanner nutzbar.
+  {
+    vendor: "Plausible",
+    pattern: /plausible(\.[a-z]+)?\.js|plausible\.io\/js/,
+    consentRelevant: false,
+    active: true,
+  },
+  { vendor: "Fathom", pattern: /cdn\.usefathom\.com/, consentRelevant: false, active: true },
+  {
+    vendor: "Simple Analytics",
+    pattern: /scripts\.simpleanalyticscdn\.com|simpleanalytics\.(com|io)/,
+    consentRelevant: false,
+    active: true,
+  },
+  {
+    vendor: "Cloudflare Web Analytics",
+    pattern: /static\.cloudflareinsights\.com\/beacon/,
+    consentRelevant: false,
+    active: true,
+  },
+  {
+    vendor: "Vercel Analytics",
+    pattern: /_vercel\/insights\/script\.js|va\.vercel-scripts\.com/,
+    consentRelevant: false,
+    active: true,
+  },
+  {
+    vendor: "Umami",
+    pattern: /umami(\.is)?\/script\.js|\/umami\.js|cloud\.umami\.is/,
+    consentRelevant: false,
+    active: true,
+  },
+];
+
+export interface DetectedAnalytics {
+  vendor: string;
+  consentRelevant: boolean;
+  active: boolean;
+}
+
+export function detectAnalytics(page: PageSnapshot): DetectedAnalytics[] {
+  return ANALYTICS_VENDORS.filter((v) => page.scripts.some((s) => v.pattern.test(haystack(s)))).map(
+    ({ vendor, consentRelevant, active }) => ({ vendor, consentRelevant, active }),
+  );
+}
+
+const TAG_MANAGERS: readonly { vendor: string; pattern: RegExp }[] = [
+  { vendor: "Google Tag Manager", pattern: /googletagmanager\.com\/gtm\.js|GTM-[A-Z0-9]{4,}/ },
+  { vendor: "Adobe Launch", pattern: /assets\.adobedtm\.com/ },
+  { vendor: "Tealium", pattern: /tags\.tiqcdn\.com|tealium\.com\/utag|utag\.js/ },
+];
+
+export function findTagManagers(page: PageSnapshot): string[] {
+  return TAG_MANAGERS.filter((t) => page.scripts.some((s) => t.pattern.test(haystack(s)))).map(
+    (t) => t.vendor,
+  );
+}
+
 export interface ThirdPartyTag {
   vendor: string;
   pattern: RegExp;
 }
 
-/** Tracker, die (anders als GTM) typischerweise erst nach Einwilligung geladen werden dürfen. */
+/**
+ * Tracker, die (anders als Tag Manager) typischerweise erst nach Einwilligung geladen werden dürfen:
+ * Werbe-/Verhaltens-Tags plus alle einwilligungsrelevanten Analytics-Dienste.
+ */
 export const THIRD_PARTY_TAGS: readonly ThirdPartyTag[] = [
   {
     vendor: "Meta Pixel",
@@ -66,11 +224,10 @@ export const THIRD_PARTY_TAGS: readonly ThirdPartyTag[] = [
     vendor: "Google Ads",
     pattern: /googleadservices\.com|googlesyndication\.com|gtag\(\s*['"]config['"]\s*,\s*['"]AW-/,
   },
-  {
-    vendor: "Google Analytics (direkt)",
-    pattern: /googletagmanager\.com\/gtag\/js|google-analytics\.com\/(analytics|ga)\.js/,
-  },
-  { vendor: "HubSpot Tracking", pattern: /js\.hs-scripts\.com|js\.hs-analytics\.net/ },
+  ...ANALYTICS_VENDORS.filter((v) => v.consentRelevant).map((v) => ({
+    vendor: v.vendor,
+    pattern: v.loaderPattern ?? v.pattern,
+  })),
 ];
 
 export interface DetectedTag {
