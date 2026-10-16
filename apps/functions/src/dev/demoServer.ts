@@ -378,23 +378,35 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const host = process.env["DEMO_HOST"]?.trim() || "127.0.0.1";
   const password = process.env["DEMO_PASSWORD"]?.trim() || undefined;
   const loopback = ["127.0.0.1", "localhost", "::1"].includes(host);
-  if (!loopback && (!password || password.length < 12)) {
+  // Offener Testbetrieb im Netz (ohne Passwort) nur auf ausdrücklichen Wunsch.
+  const open = !loopback && !password && process.env["DEMO_ALLOW_OPEN"] === "yes";
+  if (!loopback && !open && (!password || password.length < 12)) {
     console.error(
-      "Abbruch: Für DEMO_HOST außerhalb von localhost ist DEMO_PASSWORD (mindestens 12 Zeichen) Pflicht.\n" +
-        "Ohne Anmeldung darf der Demo-Modus nicht im Netzwerk erreichbar sein.",
+      "Abbruch: Für DEMO_HOST außerhalb von localhost ist entweder DEMO_PASSWORD (mindestens 12 Zeichen)\n" +
+        "oder ausdrücklich DEMO_ALLOW_OPEN=yes (offener Test ohne Passwort, nur in einem vertrauenswürdigen Netz) nötig.",
     );
     process.exit(1);
   }
+  // Im offenen Betrieb gibt es keine KI: Jeder im Netz könnte sonst auf Kosten des API-Keys Audits auslösen.
+  const ai = open ? new DisabledAiProvider() : aiFromEnv(consoleLogger);
+  if (open && (process.env["ANTHROPIC_API_KEY"] || process.env["AI_MODEL"])) {
+    console.warn(
+      "Hinweis: Im offenen Betrieb (DEMO_ALLOW_OPEN) ist die KI-Bewertung bewusst ausgeschaltet.",
+    );
+  }
   const server = createDemoServer({
-    ai: aiFromEnv(consoleLogger),
+    ai,
     webRoot: existsSync(webRoot) ? webRoot : null,
     ...(password ? { password } : {}),
   });
   server.listen(port, host, () => {
+    const mode = password
+      ? "Anmeldeseite: Name frei wählbar + gemeinsames Passwort (im Netz nur über HTTPS betreiben!)"
+      : open
+        ? "OFFEN: kein Login, alle im Netz sehen dieselben Audits. Nur für Tests in einem vertrauenswürdigen Netz."
+        : "Kein Login (nur lokal)";
     console.log(
-      `\nMarketing Copilot – Demo-Modus\n  Adresse: http://${host === "0.0.0.0" ? "<server-name>" : host}:${port}\n` +
-        `  ${password ? "Anmeldeseite: Name frei wählbar + gemeinsames Passwort (im Netz nur über HTTPS betreiben!)" : "Kein Login (nur lokal)"}\n` +
-        "  Daten nur im Arbeitsspeicher, Strg+C beendet\n",
+      `\nMarketing Copilot – Demo-Modus\n  Adresse: http://${host === "0.0.0.0" ? "<server-name>" : host}:${port}\n  ${mode}\n  Daten nur im Arbeitsspeicher, Strg+C beendet\n`,
     );
   });
 }

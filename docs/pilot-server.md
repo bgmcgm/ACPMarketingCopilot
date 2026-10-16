@@ -13,6 +13,16 @@ Für einen kleinen, internen Test mit mehreren Personen, bevor es eine Azure-Umg
 
 Das Passwort und das Sitzungs-Cookie werden bei HTTP im Klartext übertragen. Betreibe den Server deshalb nur in einem internen Netz und idealerweise hinter HTTPS. Nicht ins Internet stellen. Gib keine vertraulichen oder personenbezogenen Seiten in Audits ein; die Tests mit echten Daten gehören in die Azure-Umgebung mit Entra-Login.
 
+## Offener Test ohne Passwort (nur vertrauenswürdiges Netz)
+
+Für einen schnellen Test im eigenen Heim- oder Labornetz geht es auch ohne Anmeldung. In `~/mcopilot.env` statt `DEMO_PASSWORD` diese Zeile setzen:
+
+```
+DEMO_ALLOW_OPEN=yes
+```
+
+Folgen: Jeder, der die Adresse im Netz erreicht, kann Audits auslösen; alle sehen **dieselben** Audits (ein gemeinsamer Benutzer, gemeinsames Limit von 3 gleichzeitigen und 200 Audits pro Tag). Die **KI-Bewertung ist in diesem Modus immer aus**, damit niemand auf Kosten deines API-Keys Audits auslöst. Der Schutz vor Abrufen interner Adressen (SSRF) bleibt aktiv. Nicht ins Internet stellen, keine Portweiterleitung am Router.
+
 ## Linux-Server ohne Administratorrechte
 
 Alles im eigenen Benutzerverzeichnis, ohne `sudo`:
