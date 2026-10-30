@@ -2,8 +2,16 @@ import type {
   AuditReportDto,
   AuditStatusDto,
   AuditCategory,
+  ClientCategory,
+  ClientDto,
   CreateAuditResponse,
+  GoogleAuthorizeResponse,
   ListAuditsResponse,
+  ListClientsResponse,
+  ListReviewsResponse,
+  ReviewDto,
+  ReviewReplyStatus,
+  SyncReviewsResponse,
 } from "@mcopilot/shared-types";
 
 export class ApiClientError extends Error {
@@ -84,4 +92,36 @@ export const api = {
   getReport: (id: string) => request<AuditReportDto>(`/audits/${encodeURIComponent(id)}/report`),
   deleteAudit: (id: string) =>
     request<void>(`/audits/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  // Reviews-Modul
+  createClient: (name: string, category: ClientCategory) =>
+    request<ClientDto>("/clients", { method: "POST", body: JSON.stringify({ name, category }) }),
+  listClients: () => request<ListClientsResponse>("/clients"),
+  googleAuthorize: (clientId: string) =>
+    request<GoogleAuthorizeResponse>(`/clients/${encodeURIComponent(clientId)}/google/authorize`),
+  selectGoogleLocation: (clientId: string, locationName: string) =>
+    request<ClientDto>(`/clients/${encodeURIComponent(clientId)}/google/location`, {
+      method: "POST",
+      body: JSON.stringify({ locationName }),
+    }),
+  syncReviews: (clientId: string) =>
+    request<SyncReviewsResponse>(`/clients/${encodeURIComponent(clientId)}/reviews/sync`, {
+      method: "POST",
+    }),
+  listReviews: (filter: { clientId?: string; status?: ReviewReplyStatus } = {}) => {
+    const q = new URLSearchParams();
+    if (filter.clientId) q.set("clientId", filter.clientId);
+    if (filter.status) q.set("status", filter.status);
+    const qs = q.toString();
+    return request<ListReviewsResponse>(`/reviews${qs ? `?${qs}` : ""}`);
+  },
+  updateReviewDraft: (reviewId: string, editedText: string) =>
+    request<ReviewDto>(`/reviews/${encodeURIComponent(reviewId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ editedText }),
+    }),
+  approveReview: (reviewId: string) =>
+    request<ReviewDto>(`/reviews/${encodeURIComponent(reviewId)}/approve`, { method: "POST" }),
+  rejectReview: (reviewId: string) =>
+    request<ReviewDto>(`/reviews/${encodeURIComponent(reviewId)}/reject`, { method: "POST" }),
 };

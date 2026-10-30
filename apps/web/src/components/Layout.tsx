@@ -26,6 +26,12 @@ export function Layout(): JSX.Element {
               <NavLink to="/audits" className={navClass}>
                 Verlauf
               </NavLink>
+              <NavLink to="/copilot/clients" className={navClass}>
+                Kunden
+              </NavLink>
+              <NavLink to="/copilot/reviews" className={navClass}>
+                Bewertungen
+              </NavLink>
             </nav>
           </div>
           <div className="flex items-center gap-3 text-sm text-slate-600">

@@ -432,3 +432,153 @@ Sechste Kategorie `geo` mit zehn deterministischen Regeln (`rules/geo.ts`): Zugr
 - **Zusätzliche Abrufe:** Nur bei gewähltem GEO-Modul holt die Pipeline `/robots.txt` und `/llms.txt` vom Ursprung der final aufgelösten URL, über denselben SSRF-geschützten Fetcher (nur `text/plain`/`text/markdown`, kleine Größenobergrenze). 404/falscher Typ = "fehlt", sonstige Fehler = "nicht abrufbar" (nie ein Audit-Fehler).
 - **Gewichte:** Standard SEO 20, Tracking 20, Consent 15, Content 15, Conversion 15, GEO 15 (Summe 100; Konfiguration `SCORING_CONFIG_JSON`, GEO optional, ohne Angabe 0).
 - **Abgrenzung:** Das Modul misst technische Voraussetzungen, **nicht**, ob die Seite in KI-Antworten tatsächlich zitiert wird (dafür wären kostenpflichtige, nicht-deterministische Abfragen bei KI-Diensten nötig – nicht Teil des MVP).
+
+## Nachtrag: Modul Reviews (Agentur-Copilot, Inkrement R1 – Oktober 2026)
+
+Status: Entwurf zur Freigabe · erstes Modul einer größeren "Agentic Marketing"-Erweiterung (Social Posts, lokale SEO/GMB-Pflege, Newsletter folgen als eigene Inkremente R2–R4 auf demselben Fundament).
+
+### Zielbild
+
+Der Auditor bleibt unverändert ein Lese-Werkzeug (Claude bewertet, verändert nichts). Das Reviews-Modul ist das erste **schreibende** KI-Feature des Systems: Claude entwirft Antworten auf Google-Bewertungen, aber **nichts wird ohne menschliche Freigabe veröffentlicht**. Das Freigabe-Gate ist eine Architekturentscheidung, kein UI-Detail – der Connector hat keine Methode, die ohne vorherige `status=approved`-Prüfung im Service posten kann.
+
+**[ENTSCHEIDUNG] Mandantenmodell: Agentur, kein Self-Service.** Ein Entra-Benutzer (Christoph/LOTSE, dieselbe Anmeldung wie beim Auditor) verwaltet eine Liste eigener Kunden (`Client`). Jeder Client hat eigene verbundene Accounts (aktuell: ein Google-Business-Profil-Standort). Kein Kunden-Login, kein Mandanten-übergreifender Zugriff – alle neuen Container sind wie `audits` nach `ownerId` partitioniert und liefern ausschließlich Daten des angemeldeten Benutzers.
+
+### Komponenten (neu, `apps/functions/src`)
+
+| Modul                              | Verantwortung                                                                                                                          | Abhängigkeiten                                                |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `connectors/googleBusinessProfile` | **Erster echter Connector** (löst den in D11 angekündigten Platzhalter ein): OAuth-Flow, Standorte/Reviews lesen, Antwort schreiben    | Google Business Profile API, `crypto` (Token-Verschlüsselung) |
+| `ai/reviewReplyProvider`           | `ReviewReplyProvider`-Interface + `ClaudeReviewReplyProvider` – strukturierter Entwurf, read-only gegenüber dem Review-Text            | Anthropic SDK, gleiches Muster wie `ai/claudeProvider.ts`     |
+| `services/clientService`           | Clients anlegen/listen, Google-Account verbinden/trennen (OAuth-Callback)                                                              | `ClientRepository`                                            |
+| `services/reviewService`           | Reviews synchronisieren, KI-Entwurf erzeugen, Entwurf bearbeiten/freigeben/ablehnen, freigegebene Antwort posten                       | `ReviewRepository`, Connector, AI-Provider                    |
+| `persistence` (erweitert)          | `CosmosClientRepository`, `CosmosReviewRepository` – gleiches Muster wie `CosmosAuditRepository` (optimistic concurrency über `_etag`) | Cosmos SDK                                                    |
+
+### Datenfluss
+
+**Verbinden (einmalig je Client):**
+
+1. `POST /api/clients {name, category}` legt einen Client an.
+2. `GET /api/clients/{clientId}/google/authorize` liefert die Google-OAuth-Autorisierungs-URL (Scope `business.manage`), `state` = signiertes `{clientId, ownerId}` (HMAC, Secret aus Config) gegen CSRF/Verwechslung.
+3. Google leitet zu `GET /api/google/callback?code&state` zurück. Handler prüft `state`, tauscht `code` gegen Access-/Refresh-Token, listet Standorte (`accounts.locations.list`), Benutzer wählt im Frontend einen Standort (bei genau einem Treffer automatisch). Refresh-Token wird **verschlüsselt** (AES-256-GCM, Schlüssel aus Key Vault, siehe unten) im `ConnectedAccount`-Unterdokument gespeichert. Access-Token wird **nicht** persistiert, nur zur Laufzeit aus dem Refresh-Token erneuert.
+
+**Synchronisieren (manuell angestoßen, MVP ohne Timer):** [ENTSCHEIDUNG] Kein automatischer Scheduler im MVP – ein Button "Neue Bewertungen abrufen" ruft `POST /api/clients/{clientId}/reviews/sync`. Spätere Ausbaustufe: Timer-Trigger wie bei anderen Agentur-Kunden üblich.
+
+4. Service lädt `ConnectedAccount`, entschlüsselt Refresh-Token, holt frisches Access-Token, ruft `connector.listReviews(locationName)`.
+5. Neue Reviews (nach `externalReviewId`, Idempotenz wie bei Audits) werden als `ReviewDocument` mit `reply.status="none"` gespeichert.
+6. Für jedes neue Review ohne Entwurf: `ReviewReplyProvider.draftReply(...)` mit Review-Text, Sternebewertung, Client-Kontext (Name, Branche). Ergebnis (oder `failed`) wird im Dokument abgelegt, `reply.status="drafted"` bei Erfolg.
+
+**Freigeben:**
+
+7. `PATCH /api/reviews/{reviewId}` ändert `reply.editedText` (manuelle Korrektur, optional).
+8. `POST /api/reviews/{reviewId}/approve` – nur erlaubt, wenn `reply.status="drafted"`. Service postet `editedText ?? draftText` über `connector.replyToReview(...)`, setzt bei Erfolg `reply.status="posted"`; bei Fehler bleibt `status="drafted"` mit `reply.error`, damit ein erneuter Versuch möglich ist (kein verlorener Freigabe-Klick).
+9. `POST /api/reviews/{reviewId}/reject` setzt `reply.status="rejected"` (kein Connector-Aufruf) – z. B. wenn gar keine Antwort gewünscht ist.
+
+### Security Boundaries (zusätzlich zu B1–B5)
+
+**B6 – Google Business Profile:** `connectors/googleBusinessProfile` folgt demselben Zugriffsprinzip wie `AiProvider`: Interface in `connectors/googleBusinessProfile/client.ts`, einzige Implementierung mit echtem Netzwerkzugriff ist `httpClient.ts`; Tests laufen ausschließlich gegen ein Test-Double mit aufgezeichneten Antworten (gleiches Muster wie `tests/ai/claudeProvider.test.ts`). **[ANNAHME]** API-Form (Endpunkte, Felder) folgt der öffentlichen Google-Business-Profile-API-Dokumentation Stand Oktober 2026; vor dem ersten echten Aufruf gegen die aktuelle Doku und ein echtes Testkonto verifizieren – wie bei B6/D6 des Auditors ist das Anthropic-Schema-Verhalten nie gegen die echte API gelaufen, gilt hier identisch für Google.
+
+**B7 – Token-Verschlüsselung:** Google-Refresh-Tokens sind Zugriffsschlüssel auf echte Kundenprofile (höheres Schadenspotenzial als der interne Anthropic-Key). **[ENTSCHEIDUNG]** Anwendungsseitige Verschlüsselung (AES-256-GCM) vor dem Schreiben nach Cosmos, Schlüssel (`TOKEN_ENCRYPTION_KEY`, 32 Byte) als Key-Vault-Referenz wie `ANTHROPIC_API_KEY` – zusätzlich zur Transport-/Ruhe-Verschlüsselung von Cosmos selbst (Defense in Depth, falls der Cosmos-Zugriff selbst kompromittiert wird). Schlüsselrotation ist **nicht** implementiert (bekannte Lücke, siehe `docs/known-gaps.md`).
+
+**B8 – Freigabe-Gate ist architektonisch erzwungen, nicht nur UI:** `reviewService.approve()` ist der einzige Code-Pfad, der `connector.replyToReview()` aufruft, und prüft `reply.status === "drafted"` **vor** jedem Connector-Aufruf. Es gibt keinen Endpunkt und keinen Hintergrundjob, der ohne diesen Zustandsübergang schreibt.
+
+**B9 – Prompt-Injection:** Der Bewertungstext eines Kunden ist unvertrauter Inhalt (jeder kann eine Google-Bewertung schreiben). Gleiches Muster wie B5: Text steht in einem klar markierten Datenblock, System-Prompt weist an, ihn nur als zu beantwortenden Text zu behandeln, Ausgabe wird gegen Schema validiert (kein Freitext-Durchgriff auf `connector`-Aufrufe – die KI liefert nur Text für `replyText`, niemals ausführbare Aktionen).
+
+### Datenmodell (neu)
+
+```ts
+interface ClientDocument {
+  id: string; // clientId (UUID v4)
+  ownerId: string; // Partition Key, wie bei audits
+  type: "client";
+  schemaVersion: 1;
+  name: string;
+  category: "handel" | "kmu" | "other";
+  createdAt: string;
+  googleAccount?: {
+    status: "connected" | "error";
+    locationName: string; // z. B. "accounts/123/locations/456"
+    displayName: string;
+    connectedAt: string;
+    lastSyncAt?: string;
+    encryptedRefreshToken: string; // AES-256-GCM, Base64 (iv + ciphertext + authTag)
+  };
+}
+
+interface ReviewDocument {
+  id: string; // reviewId (UUID v4, intern)
+  ownerId: string; // Partition Key
+  clientId: string;
+  type: "review";
+  schemaVersion: 1;
+  provider: "google_business_profile";
+  externalReviewId: string; // Google review name, für Idempotenz beim Sync
+  reviewer: { displayName: string };
+  starRating: 1 | 2 | 3 | 4 | 5;
+  comment: string | null;
+  reviewCreatedAt: string;
+  fetchedAt: string;
+  reply: {
+    status: "none" | "drafted" | "posted" | "rejected";
+    draftText?: string;
+    editedText?: string;
+    ai?: {
+      status: "completed" | "failed";
+      model: string;
+      promptVersion: string;
+      generatedAt?: string;
+      error?: { code: string; message: string };
+    };
+    approvedAt?: string;
+    postedAt?: string;
+    error?: { code: string; message: string }; // letzter fehlgeschlagener Post-Versuch
+  };
+}
+```
+
+Container `clients` und `reviews`, beide Partition Key `/ownerId`, kein TTL (anders als `audits` – Kundendaten sollen nicht automatisch verschwinden).
+
+### API Contract (neu)
+
+| Methode | Pfad                                   | Beschreibung                                                 |
+| ------- | -------------------------------------- | ------------------------------------------------------------ |
+| POST    | `/clients`                             | Client anlegen                                               |
+| GET     | `/clients`                             | eigene Clients listen                                        |
+| GET     | `/clients/{clientId}/google/authorize` | Google-OAuth-URL erzeugen                                    |
+| GET     | `/google/callback`                     | OAuth-Redirect-Ziel (kein JSON – Weiterleitung ins Frontend) |
+| POST    | `/clients/{clientId}/reviews/sync`     | neue Reviews abrufen + KI-Entwürfe erzeugen                  |
+| GET     | `/reviews?clientId=&status=`           | Reviews listen (Freigabe-Queue)                              |
+| PATCH   | `/reviews/{reviewId}`                  | Entwurf bearbeiten (`editedText`)                            |
+| POST    | `/reviews/{reviewId}/approve`          | Antwort freigeben + posten                                   |
+| POST    | `/reviews/{reviewId}/reject`           | Entwurf verwerfen, keine Antwort posten                      |
+
+Gleiches Fehlerformat wie beim Auditor (`error.code`, `correlationId`).
+
+### Konfigurationsparameter (neu)
+
+| Name                         | Pflicht | Beschreibung                                                        |
+| ---------------------------- | ------- | ------------------------------------------------------------------- |
+| `GOOGLE_OAUTH_CLIENT_ID`     | ja*     | Google-Cloud-OAuth-Client (Web Application)                         |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | ja*     | Key-Vault-Referenz                                                  |
+| `GOOGLE_OAUTH_REDIRECT_URI`  | ja*     | muss exakt in der Google-Cloud-Console hinterlegt sein              |
+| `GOOGLE_OAUTH_STATE_SECRET`  | ja*     | HMAC-Secret für `state`-Signatur (Key-Vault-Referenz)               |
+| `TOKEN_ENCRYPTION_KEY`       | ja*     | 32 Byte, Base64, Key-Vault-Referenz                                 |
+| `REVIEW_AI_MODEL`            | nein    | Default: `AI_MODEL` (gleiches Modell wie Auditor, separat änderbar) |
+
+\* nur Pflicht, wenn das Reviews-Modul aktiv genutzt wird; fehlen sie, schlägt nur der Start der betroffenen Routen fehl, nicht der gesamte Funktions-Host (gleiche Robustheit wie `AI_ENABLED=false` beim Auditor – siehe `connectors/googleBusinessProfile/README.md` für den Disabled-Zustand).
+
+### Entscheidungen (ADR-Kurzform)
+
+| #   | Entscheidung                                                                   | Begründung / Konsequenz                                                                                  |
+| --- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| R1  | Agentur-Modell statt Self-Service-Mandanten                                    | passt zum Beratungsgeschäft, kein zusätzliches Kunden-Auth-System, kleinster Scope für die erste Scheibe |
+| R2  | Freigabe-Pflicht für jede Antwort, architektonisch erzwungen (B8)              | eine falsch formulierte KI-Antwort unter dem Namen eines Kunden ist teurer als manuelle Mehrarbeit       |
+| R3  | Kein automatischer Sync-Timer im MVP, manueller Button                         | gleiche MVP-Einfachheit wie D3 (Polling statt SignalR) beim Auditor; Timer ist spätere Ausbaustufe       |
+| R4  | Anwendungsseitige Token-Verschlüsselung zusätzlich zu Cosmos-at-rest           | Refresh-Token ist ein echter Account-Zugriff, nicht nur ein Lese-API-Key wie bei Anthropic               |
+| R5  | `connectors/` verlässt den Platzhalter-Zustand nur für Google Business Profile | löst D11 ein; HubSpot/GA4/Dynamics bleiben weiterhin reine Platzhalter                                   |
+
+### Bewusst nicht Teil dieses Inkrements
+
+- Social-Media-Posts, lokale SEO/GMB-Stammdaten-Pflege, Newsletter – eigene Inkremente auf demselben Fundament (Client, Connector-Pattern, Freigabe-Gate).
+- Automatischer Sync-Timer.
+- Bicep-/Infrastruktur-Änderungen (neue Cosmos-Container, Key-Vault-Secrets) – wie beim Auditor selbst (Inkremente 0–8 vor Inkrement 9) wird zuerst die Anwendungslogik fertiggestellt und getestet, bevor Infrastruktur folgt.
+- Echter Google-OAuth-Flow und echte API-Aufrufe wurden **nicht** gegen ein reales Google-Konto geprüft (siehe `docs/known-gaps.md`).

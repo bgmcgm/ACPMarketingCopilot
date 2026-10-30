@@ -11,3 +11,7 @@ export class ApiError extends Error {
 }
 
 export const notFound = (): ApiError => new ApiError(404, "NOT_FOUND", "Audit nicht gefunden.");
+export const clientNotFound = (): ApiError =>
+  new ApiError(404, "NOT_FOUND", "Kunde nicht gefunden.");
+export const reviewNotFound = (): ApiError =>
+  new ApiError(404, "NOT_FOUND", "Bewertung nicht gefunden.");

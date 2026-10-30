@@ -1,5 +1,7 @@
-import type { AuditQueueMessage } from "@mcopilot/shared-types";
+import type { AuditQueueMessage, ReviewReplyStatus } from "@mcopilot/shared-types";
 import type { AuditDocument, AuditSummaryRow } from "../domain/auditDocument.js";
+import type { ClientDocument } from "../domain/clientDocument.js";
+import type { ReviewDocument, ReviewSummaryRow } from "../domain/reviewDocument.js";
 
 export interface AuditRepository {
   create(doc: AuditDocument): Promise<void>;
@@ -26,5 +28,40 @@ export interface AuditRepository {
 
 export interface JobQueue {
   enqueue(message: AuditQueueMessage): Promise<void>;
+  ping(): Promise<void>;
+}
+
+export interface ClientRepository {
+  create(doc: ClientDocument): Promise<void>;
+  get(ownerId: string, id: string): Promise<ClientDocument | null>;
+  /** Optimistische Sperre über _etag; verhindert verlorene Updates bei gleichzeitigem OAuth-Callback. */
+  claim(doc: ClientDocument): Promise<ClientDocument | null>;
+  /** Clients einer Agentur sind erfahrungsgemäß wenige Dutzend; keine Paginierung im MVP. */
+  list(ownerId: string): Promise<ClientDocument[]>;
+  ping(): Promise<void>;
+}
+
+export interface ReviewListFilter {
+  clientId?: string;
+  status?: ReviewReplyStatus;
+}
+
+export interface ReviewRepository {
+  create(doc: ReviewDocument): Promise<void>;
+  get(ownerId: string, id: string): Promise<ReviewDocument | null>;
+  /** Idempotenz beim Sync: bereits bekannte Google-Reviews nicht erneut anlegen. */
+  getByExternalId(
+    ownerId: string,
+    clientId: string,
+    externalReviewId: string,
+  ): Promise<ReviewDocument | null>;
+  /** Optimistische Sperre über _etag; verhindert doppeltes Posten bei gleichzeitiger Freigabe. */
+  claim(doc: ReviewDocument): Promise<ReviewDocument | null>;
+  list(
+    ownerId: string,
+    filter: ReviewListFilter,
+    limit: number,
+    continuationToken?: string,
+  ): Promise<{ items: ReviewSummaryRow[]; continuationToken?: string }>;
   ping(): Promise<void>;
 }

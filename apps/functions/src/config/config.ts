@@ -32,6 +32,17 @@ const EnvSchema = z.object({
   AI_TIMEOUT_MS: int(60_000, 1000),
   AI_MAX_OUTPUT_TOKENS: int(4096, 256),
   AI_OUTPUT_LANGUAGE: z.string().min(1).default("Deutsch"),
+
+  // Reviews-Modul (Inkrement R1) — optional; fehlen diese Werte, bleibt das Modul deaktiviert
+  // (503 statt Startabbruch, siehe container.ts), analog zu AI_ENABLED=false.
+  COSMOS_CLIENTS_CONTAINER: z.string().min(1).default("clients"),
+  COSMOS_REVIEWS_CONTAINER: z.string().min(1).default("reviews"),
+  GOOGLE_OAUTH_CLIENT_ID: z.string().optional(),
+  GOOGLE_OAUTH_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_OAUTH_REDIRECT_URI: z.string().optional(),
+  GOOGLE_OAUTH_STATE_SECRET: z.string().optional(),
+  TOKEN_ENCRYPTION_KEY: z.string().optional(),
+  REVIEW_AI_MODEL: z.string().optional(),
 });
 
 export interface AppConfig {
@@ -58,6 +69,17 @@ export interface AppConfig {
         maxOutputTokens: number;
         outputLanguage: string;
       };
+  reviews:
+    | { enabled: false }
+    | {
+        enabled: true;
+        clientsContainer: string;
+        reviewsContainer: string;
+        oauth: { clientId: string; clientSecret: string; redirectUri: string };
+        stateSecret: string;
+        tokenEncryptionKey: string;
+        aiModel: string;
+      };
 }
 
 /** Validiert die Umgebung beim Start; fehlende Pflichtwerte lassen den Start fehlschlagen. */
@@ -72,6 +94,23 @@ export function loadConfig(env: Record<string, string | undefined>): AppConfig {
   if (ports.some((p) => !Number.isInteger(p) || p < 1 || p > 65535)) {
     throw new Error("Ungültige Konfiguration: FETCH_ALLOWED_PORTS");
   }
+  // Reviews-Modul: aktiviert, sobald alle Google-/Verschlüsselungswerte gesetzt sind; sonst
+  // bleibt es deaktiviert (Handler antworten 503), kein Startabbruch — bewusst anders als AI_ENABLED,
+  // das ein explizites Flag ist, weil dieses Modul rein optional und noch ungetestet ist (siehe known-gaps.md).
+  const reviewsConfigured = Boolean(
+    e.GOOGLE_OAUTH_CLIENT_ID?.trim() &&
+    e.GOOGLE_OAUTH_CLIENT_SECRET?.trim() &&
+    e.GOOGLE_OAUTH_REDIRECT_URI?.trim() &&
+    e.GOOGLE_OAUTH_STATE_SECRET?.trim() &&
+    e.TOKEN_ENCRYPTION_KEY?.trim(),
+  );
+  const reviewsAiModel = e.REVIEW_AI_MODEL?.trim() || e.AI_MODEL?.trim();
+  if (reviewsConfigured && !reviewsAiModel) {
+    throw new Error(
+      "Ungültige Konfiguration: REVIEW_AI_MODEL oder AI_MODEL ist erforderlich, wenn das Reviews-Modul konfiguriert ist",
+    );
+  }
+
   const aiEnabled = e.AI_ENABLED === "true";
   if (aiEnabled && (!e.AI_MODEL?.trim() || !e.ANTHROPIC_API_KEY?.trim())) {
     throw new Error(
@@ -104,6 +143,21 @@ export function loadConfig(env: Record<string, string | undefined>): AppConfig {
           timeoutMs: e.AI_TIMEOUT_MS,
           maxOutputTokens: e.AI_MAX_OUTPUT_TOKENS,
           outputLanguage: e.AI_OUTPUT_LANGUAGE,
+        }
+      : { enabled: false },
+    reviews: reviewsConfigured
+      ? {
+          enabled: true,
+          clientsContainer: e.COSMOS_CLIENTS_CONTAINER,
+          reviewsContainer: e.COSMOS_REVIEWS_CONTAINER,
+          oauth: {
+            clientId: (e.GOOGLE_OAUTH_CLIENT_ID as string).trim(),
+            clientSecret: (e.GOOGLE_OAUTH_CLIENT_SECRET as string).trim(),
+            redirectUri: (e.GOOGLE_OAUTH_REDIRECT_URI as string).trim(),
+          },
+          stateSecret: (e.GOOGLE_OAUTH_STATE_SECRET as string).trim(),
+          tokenEncryptionKey: (e.TOKEN_ENCRYPTION_KEY as string).trim(),
+          aiModel: reviewsAiModel as string,
         }
       : { enabled: false },
   };
