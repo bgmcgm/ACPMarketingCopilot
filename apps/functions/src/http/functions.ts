@@ -28,7 +28,7 @@ const toInit = (res: ApiResponse): HttpResponseInit => ({
 
 type Route = {
   name: string;
-  methods: ("GET" | "POST" | "DELETE")[];
+  methods: ("GET" | "POST" | "PATCH" | "DELETE")[];
   route: string;
   handler: (h: Handlers) => (req: ApiRequest) => Promise<ApiResponse>;
 };
@@ -51,6 +51,53 @@ const routes: Route[] = [
   },
   { name: "listRulesets", methods: ["GET"], route: "rulesets", handler: (h) => h.listRulesets },
   { name: "health", methods: ["GET"], route: "health", handler: (h) => h.health },
+
+  // Reviews-Modul (Inkrement R1)
+  { name: "createClient", methods: ["POST"], route: "clients", handler: (h) => h.createClient },
+  { name: "listClients", methods: ["GET"], route: "clients", handler: (h) => h.listClients },
+  {
+    name: "googleAuthorize",
+    methods: ["GET"],
+    route: "clients/{clientId}/google/authorize",
+    handler: (h) => h.googleAuthorize,
+  },
+  {
+    name: "googleCallback",
+    methods: ["GET"],
+    route: "google/callback",
+    handler: (h) => h.googleCallback,
+  },
+  {
+    name: "selectGoogleLocation",
+    methods: ["POST"],
+    route: "clients/{clientId}/google/location",
+    handler: (h) => h.selectGoogleLocation,
+  },
+  {
+    name: "syncReviews",
+    methods: ["POST"],
+    route: "clients/{clientId}/reviews/sync",
+    handler: (h) => h.syncReviews,
+  },
+  { name: "listReviews", methods: ["GET"], route: "reviews", handler: (h) => h.listReviews },
+  {
+    name: "updateReviewDraft",
+    methods: ["PATCH"],
+    route: "reviews/{reviewId}",
+    handler: (h) => h.updateReviewDraft,
+  },
+  {
+    name: "approveReview",
+    methods: ["POST"],
+    route: "reviews/{reviewId}/approve",
+    handler: (h) => h.approveReview,
+  },
+  {
+    name: "rejectReview",
+    methods: ["POST"],
+    route: "reviews/{reviewId}/reject",
+    handler: (h) => h.rejectReview,
+  },
 ];
 
 export function registerHttpFunctions(): void {

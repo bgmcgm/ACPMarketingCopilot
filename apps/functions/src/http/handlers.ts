@@ -8,6 +8,8 @@ import {
 import type { AuditRepository, JobQueue } from "../persistence/ports.js";
 import { ApiError } from "../services/errors.js";
 import type { AuditService } from "../services/auditService.js";
+import type { ClientService } from "../services/clientService.js";
+import type { ReviewService } from "../services/reviewService.js";
 
 /** Minimale, runtime-unabhängige Sicht auf Request/Response (Azure-Adapter in functions.ts). */
 export interface ApiRequest {
@@ -37,6 +39,8 @@ export interface HandlerDeps {
   version: string;
   logger: Logger;
   newCorrelationId?: () => string;
+  clientService?: ClientService;
+  reviewService?: ReviewService;
 }
 
 const MAX_BODY_BYTES = 10_000;
@@ -85,6 +89,75 @@ export class Handlers {
     body: { rulesets: this.d.service.rulesets() },
   }));
 
+  // ---- Reviews-Modul (Inkrement R1) ------------------------------------------
+
+  createClient = this.secured(async (req, p) => ({
+    status: 201,
+    body: await this.requireClientService().create(p, await this.readJsonBody(req)),
+  }));
+
+  listClients = this.secured(async (_req, p) => ({
+    status: 200,
+    body: await this.requireClientService().list(p),
+  }));
+
+  googleAuthorize = this.secured(async (req, p) => ({
+    status: 200,
+    body: await this.requireClientService().getAuthorizeUrl(p, req.params["clientId"] ?? ""),
+  }));
+
+  /** Redirect-Ziel für Google; kein JSON, Weiterleitung ins Frontend (siehe ARCHITECTURE.md). */
+  googleCallback = (req: ApiRequest): Promise<ApiResponse> =>
+    this.run(req, async () => {
+      const principal = parsePrincipal(
+        req.headers.get(CLIENT_PRINCIPAL_HEADER),
+        this.d.allowedRole,
+      );
+      const code = req.query.get("code");
+      const state = req.query.get("state");
+      if (!code || !state) throw new ApiError(400, "VALIDATION_ERROR", "code/state fehlen.");
+      await this.requireClientService().handleGoogleCallback(principal, { code, state });
+      return { status: 302, headers: { location: "/copilot/clients" } };
+    });
+
+  selectGoogleLocation = this.secured(async (req, p) => ({
+    status: 200,
+    body: await this.requireClientService().selectGoogleLocation(
+      p,
+      req.params["clientId"] ?? "",
+      await this.readJsonBody(req),
+    ),
+  }));
+
+  syncReviews = this.secured(async (req, p) => ({
+    status: 200,
+    body: await this.requireReviewService().sync(p, req.params["clientId"] ?? ""),
+  }));
+
+  listReviews = this.secured(async (req, p) => ({
+    status: 200,
+    body: await this.requireReviewService().list(p, Object.fromEntries(req.query)),
+  }));
+
+  updateReviewDraft = this.secured(async (req, p) => ({
+    status: 200,
+    body: await this.requireReviewService().updateDraft(
+      p,
+      req.params["reviewId"] ?? "",
+      await this.readJsonBody(req),
+    ),
+  }));
+
+  approveReview = this.secured(async (req, p) => ({
+    status: 200,
+    body: await this.requireReviewService().approve(p, req.params["reviewId"] ?? ""),
+  }));
+
+  rejectReview = this.secured(async (req, p) => ({
+    status: 200,
+    body: await this.requireReviewService().reject(p, req.params["reviewId"] ?? ""),
+  }));
+
   /** Anonym: nur Liveness. `?deep=true` erfordert Anmeldung und prüft Abhängigkeiten. */
   health = async (req: ApiRequest): Promise<ApiResponse> => {
     if (req.query.get("deep") !== "true")
@@ -111,6 +184,30 @@ export class Handlers {
       };
     });
   };
+
+  private async readJsonBody(req: ApiRequest): Promise<unknown> {
+    const declared = Number(req.headers.get("content-length") ?? 0);
+    if (declared > MAX_BODY_BYTES) throw new ApiError(413, "PAYLOAD_TOO_LARGE", "Anfrage zu groß.");
+    try {
+      return await req.json();
+    } catch {
+      throw new ApiError(400, "VALIDATION_ERROR", "Ungültiger JSON-Body.");
+    }
+  }
+
+  private requireClientService(): ClientService {
+    if (!this.d.clientService) {
+      throw new ApiError(503, "SERVICE_UNAVAILABLE", "Reviews-Modul ist nicht konfiguriert.");
+    }
+    return this.d.clientService;
+  }
+
+  private requireReviewService(): ReviewService {
+    if (!this.d.reviewService) {
+      throw new ApiError(503, "SERVICE_UNAVAILABLE", "Reviews-Modul ist nicht konfiguriert.");
+    }
+    return this.d.reviewService;
+  }
 
   private secured(handler: Handler): (req: ApiRequest) => Promise<ApiResponse> {
     return (req) =>

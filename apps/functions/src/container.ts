@@ -1,13 +1,22 @@
 import { loadConfig, type AppConfig } from "./config/config.js";
 import { CosmosAuditRepository } from "./persistence/cosmosAuditRepository.js";
+import { CosmosClientRepository } from "./persistence/cosmosClientRepository.js";
+import { CosmosReviewRepository } from "./persistence/cosmosReviewRepository.js";
 import { StorageJobQueue } from "./persistence/storageJobQueue.js";
 import { defaultRuleset } from "./rules/index.js";
 import { AuditService } from "./services/auditService.js";
+import { ClientService } from "./services/clientService.js";
+import { ReviewService } from "./services/reviewService.js";
 import { Handlers, type Logger } from "./http/handlers.js";
 import { SafeFetcher } from "./fetcher/safeFetcher.js";
 import { AuditPipeline } from "./worker/auditPipeline.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { ClaudeProvider, DisabledAiProvider } from "./ai/claudeProvider.js";
+import {
+  ClaudeReviewReplyProvider,
+  DisabledReviewReplyProvider,
+} from "./ai/claudeReviewReplyProvider.js";
+import { HttpGoogleBusinessProfileClient } from "./connectors/googleBusinessProfile/httpClient.js";
 
 export const APP_VERSION = process.env["APP_VERSION"] ?? "0.1.0";
 
@@ -63,6 +72,48 @@ export function getContainer(logger: Logger): Container {
     scoring: config.scoring,
     logger,
   });
+
+  let clientService: ClientService | undefined;
+  let reviewService: ReviewService | undefined;
+  if (config.reviews.enabled) {
+    const google = new HttpGoogleBusinessProfileClient();
+    const clientsRepo = new CosmosClientRepository({
+      ...config.cosmos,
+      container: config.reviews.clientsContainer,
+    });
+    const reviewsRepo = new CosmosReviewRepository({
+      ...config.cosmos,
+      container: config.reviews.reviewsContainer,
+    });
+    const reviewAi = config.ai.enabled
+      ? new ClaudeReviewReplyProvider(
+          new Anthropic({ apiKey: config.ai.apiKey }),
+          {
+            model: config.reviews.aiModel,
+            timeoutMs: config.ai.timeoutMs,
+            maxOutputTokens: config.ai.maxOutputTokens,
+            outputLanguage: config.ai.outputLanguage,
+          },
+          logger,
+        )
+      : new DisabledReviewReplyProvider();
+    clientService = new ClientService({
+      repo: clientsRepo,
+      google,
+      oauth: config.reviews.oauth,
+      stateSecret: config.reviews.stateSecret,
+      tokenEncryptionKey: config.reviews.tokenEncryptionKey,
+    });
+    reviewService = new ReviewService({
+      reviews: reviewsRepo,
+      clients: clientsRepo,
+      google,
+      ai: reviewAi,
+      oauth: config.reviews.oauth,
+      tokenEncryptionKey: config.reviews.tokenEncryptionKey,
+    });
+  }
+
   cached = {
     config,
     pipeline,
@@ -73,6 +124,8 @@ export function getContainer(logger: Logger): Container {
       allowedRole: config.allowedRole,
       version: APP_VERSION,
       logger,
+      ...(clientService ? { clientService } : {}),
+      ...(reviewService ? { reviewService } : {}),
     }),
   };
   return cached;

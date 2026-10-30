@@ -1,4 +1,4 @@
-# Bekannte Lücken und ungeprüfte Annahmen (Stand Inkrement 11)
+# Bekannte Lücken und ungeprüfte Annahmen (Stand Inkrement R1)
 
 Ehrliche Liste dessen, was **nicht** verifiziert ist oder bewusst fehlt. Nichts davon wurde gegen echtes Azure, Entra ID oder die Claude-API ausgeführt.
 
@@ -43,3 +43,16 @@ Siehe `docs/runbook.md` Abschnitt 6. Besonders kritisch: Flex Consumption als SW
 - Strukturierte Daten werden nur als JSON-LD erkannt (kein Microdata/RDFa).
 - Die Aussage "viele KI-Crawler führen kein JavaScript aus" ist eine verbreitete Beobachtung, kein von uns geprüftes Verhalten; die Schwellenwerte der Regel (Wörter/Skripte) sind Heuristiken.
 - Ältere gespeicherte Audits enthalten kein GEO-Ergebnis; ihr Gesamtscore wurde mit den alten Gewichten (SEO 25 …) berechnet.
+
+## Reviews-Modul (Inkrement R1)
+
+Nichts davon wurde gegen ein echtes Google-Konto oder echtes Azure ausgeführt; alle Tests laufen gegen Test-Doubles (`FakeGoogleClient`, In-Memory-Repositories) oder gegen einen gemockten `fetch`.
+
+- **Nie gegen die echte Google-API gelaufen:** Endpunkt-URLs, Feldformen und das Scope `business.manage` von `connectors/googleBusinessProfile/` sind \[ANNAHME\] Stand Oktober 2026 (siehe ARCHITECTURE.md B6). Google hat diese APIs mehrfach umbenannt/aufgeteilt; vor dem ersten echten Aufruf gegen die aktuelle Dokumentation und ein Google-Business-Profile-Testkonto verifizieren.
+- **Business-Profile-API-Zugriff ist bei Google selbst freigabepflichtig:** Neue Google-Cloud-Projekte benötigen für die Business-Profile-APIs in der Regel eine gesonderte Freigabe durch Google (Antragsformular, Wartezeit) – das ist ein externer Vorgang, den dieses Repository nicht auslösen oder beschleunigen kann.
+- **OAuth-Consent-Screen und App-Verifizierung:** Mit dem Scope `business.manage` verlangt Google je nach Nutzerzahl eine OAuth-App-Verifizierung (Branding-Prüfung, ggf. Sicherheits-Assessment). Nicht Teil dieses Inkrements.
+- **Kein Scheduler:** Reviews werden nur durch einen manuellen "Jetzt synchronisieren"-Aufruf abgerufen (R3); kein Timer-Trigger.
+- **Token-Verschlüsselung ohne Rotation:** `TOKEN_ENCRYPTION_KEY` wird einmalig gesetzt; es gibt keinen Rotationsmechanismus (alle verschlüsselten Refresh-Token müssten bei einer Rotation neu verschlüsselt werden).
+- **Keine Bicep-/Infrastruktur-Änderungen:** Die neuen Cosmos-Container (`clients`, `reviews`) und Key-Vault-Secrets (`GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_STATE_SECRET`, `TOKEN_ENCRYPTION_KEY`) existieren nur als Konfigurationserwartung (`config.ts`), nicht als Bicep-Ressourcen – wie beim Auditor selbst folgt Infrastruktur erst, nachdem die Anwendungslogik steht.
+- **Frontend nur mit gemockter/In-Memory-API gesehen**, nicht im Browser gegen eine echte Function App.
+- **Social-Media-Posts, lokale SEO/GMB-Stammdaten-Pflege, Newsletter** (die übrigen drei angefragten Fähigkeiten) sind nicht Teil dieses Inkrements; sie sollen auf demselben Fundament (Client, Connector-Pattern, Freigabe-Gate) aufsetzen.
